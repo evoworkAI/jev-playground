@@ -1,0 +1,63 @@
+/* ==========================================================================
+   简繁切换按钮
+   --------------------------------------------------------------------------
+   选中态完全由 <html data-zh="tc|sc"> 驱动（zh.js 负责写这个属性），
+   JS 不用维护任何 class —— 少一处状态，就少一处能对不上的地方。
+
+   配色借宿主的 --cyan；宿主没定义时退回吃豆人页那套青色。
+   ========================================================================== */
+
+.zh-switch {
+  display: inline-flex;
+  align-items: stretch;
+  flex: none;
+  gap: 1px;
+  padding: 2px;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(0, 255, 204, 0.28);
+  user-select: none;
+  /* 按钮不该被页面的 user-select: none 之外的东西影响，显式收一下继承 */
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.zh-switch > span {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 11px;
+  border-radius: 9999px;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.45;
+  letter-spacing: 0.5px;
+  color: #9ca3af;
+  white-space: nowrap;
+  /* 只过渡真正会变的属性，避免 hover 时触发重排 */
+  transition: color 0.15s, background-color 0.15s, box-shadow 0.15s;
+}
+
+.zh-switch > span:hover {
+  color: #f3f4f6;
+}
+
+/* 选中态 */
+html[data-zh="tc"] .zh-switch > [data-zh-set="tc"],
+html[data-zh="sc"] .zh-switch > [data-zh-set="sc"] {
+  color: #0b0f19;
+  background-color: #00ffcc;
+  box-shadow: 0 0 12px rgba(0, 255, 204, 0.45);
+}
+
+/* 小号：塞进吃豆人的日志终端标题栏（那一行只有 10px 字号，
+   用常规尺寸会把 console-head 撑高，日志可视区域就矮一截） */
+.zh-switch.sm > span {
+  padding: 0 7px;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+.zh-switch.sm {
+  padding: 1px;
+  border-color: rgba(0, 255, 204, 0.22);
+}

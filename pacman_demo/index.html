@@ -1,0 +1,3696 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="author" content="静电的AI研习社">
+  <meta name="description" content="Jev 决策模型 vs 传统 LLM 的吃豆人实时决策对比演示 · 静电的AI研习社">
+  <title>Jev AI - 赛博霓虹吃豆人决策演示 (Neon Pac-Man) | 静电的AI研习社</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    :root {
+      --pad: 14px;         /* 容器内边距 */
+      --gap: 12px;         /* 三栏之间的间距 */
+      --col-gap: 12px;     /* 画布与操作按钮之间的间距 */
+      --actions-h: 40px;   /* 操作按钮那一行 */
+
+      /* 三栏总宽（整个 stage）：最小 1280px，最大屏宽的 70%。
+         再补两个上限 —— 1560px（超宽屏上别把日志拉成一条河）和 100vw（不许横向溢出）。
+         小屏时 100vw 生效，所以永远不会出现横向滚动条。 */
+      --stage-w: min(max(1280px, 70vw), 1560px, 100vw);
+
+      /* 两侧面板的基准宽度。容器总宽是定的，所以这两个值就是它们的真实宽度，
+         不会像以前那样在宽屏上被 flex-grow 悄悄撑大。 */
+      --dash-w: 300px;     /* 右侧仪表盘 */
+      --console-w: 250px;  /* 日志终端 */
+      --side-w: calc(var(--dash-w) + var(--console-w));
+
+      /* 画布边长 = 「扣掉两侧面板和所有间距后剩下的宽度」的 85%，
+         再用「高度允许的最大值」夹一次（画布是正方形，高度不够时它才是限制）。
+         剩的那 15% 会被日志列吸收 —— 容器总宽是定死的，所以游戏让出来的宽度
+         必然流向日志，两侧加起来始终等于 --stage-w，不会留下空隙。
+
+         --chrome-h 是「画布以外还会占掉多少高度」的预留：顶部标题行 + 页脚，
+         实测约 110px。给到两倍多，屏幕矮的时候画布自己会缩，不会顶出滚动条。
+         被 hub 用 iframe 嵌进来时会隐藏页头页脚，那时把这个值调小即可。 */
+      --chrome-h: 250px;
+      --board: min(
+        max(300px, calc(
+          (var(--stage-w) - var(--side-w) - 2 * var(--gap) - 2 * var(--pad) - 2px) * 0.85
+        )),
+        calc(100vh - var(--chrome-h))
+      );
+      --panel-h: calc(var(--board) + var(--col-gap) + var(--actions-h) + 2 * var(--pad) + 2px);
+    }
+
+    body {
+      background-color: #0b0f19;
+      color: #f3f4f6;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow-y: auto;
+      user-select: none;
+    }
+
+    header { flex: none; }
+
+    /* 页脚：版权声明。宽度跟 stage 对齐，这样在宽屏上和游戏区左右边界齐平 */
+    footer {
+      flex: none;
+      width: var(--stage-w);
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255, 255, 255, 0.07);
+      text-align: center;
+      font-size: 12px;
+      color: #6b7280;
+      letter-spacing: 0.3px;
+    }
+    footer .credit { color: #9ca3af; }
+    footer .credit b {
+      color: #e5e7eb;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+
+    /* 顶部导航标题区：一行两端对齐 —— 左边是「这是什么」（badge + 标题），
+       右边是「谁做的」（频道署名）。频道竖着堆在标题上方会占掉 3 行高度，
+       横过来只要 1 行，画布还能多留点空间。 */
+    header {
+      width: var(--stage-w);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px 18px;
+      flex-wrap: wrap;
+      text-align: left;
+    }
+    .head-left {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;   /* badge 和标题都靠左，而不是让 inline-block 各自居中 */
+    }
+    .channel {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      flex: none;
+      padding: 5px 15px 5px 11px;
+      border-radius: 9999px;
+      text-decoration: none;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      background: linear-gradient(135deg, rgba(244, 63, 94, 0.16), rgba(168, 85, 247, 0.16));
+      border: 1px solid rgba(244, 63, 94, 0.38);
+      box-shadow: 0 0 18px rgba(244, 63, 94, 0.18);
+      transition: all 0.2s ease;
+    }
+    .channel:hover {
+      border-color: rgba(244, 63, 94, 0.75);
+      box-shadow: 0 0 26px rgba(244, 63, 94, 0.38);
+      transform: translateY(-1px);
+    }
+    /* 播放三角小方块，借用 YouTube 的红 */
+    .channel-ico {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      flex: none;
+      border-radius: 6px;
+      background: #f43f5e;
+      color: #fff;
+      font-size: 10px;
+      padding-left: 2px;   /* 三角形视觉重心偏左，补一点 */
+      box-shadow: 0 0 10px rgba(244, 63, 94, 0.55);
+    }
+    .channel-name {
+      background: linear-gradient(135deg, #ffffff 0%, #fda4af 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .channel-handle {
+      font-size: 11.5px;
+      font-weight: 500;
+      color: #9ca3af;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      border-radius: 9999px;
+      background: rgba(0, 255, 204, 0.1);
+      color: #00ffcc;
+      border: 1px solid rgba(0, 255, 204, 0.3);
+      margin-bottom: 7px;
+    }
+    h1 {
+      font-size: 24px;
+      letter-spacing: 1px;
+      background: linear-gradient(135deg, #ffffff 0%, #a5b4fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    /* 主内容区：左边游戏画布，右边 AI 仪表盘 */
+    .container {
+      display: flex;
+      gap: var(--gap);
+      background: rgba(17, 24, 39, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      padding: var(--pad);
+      border-radius: 20px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 40px rgba(99, 102, 241, 0.1);
+      backdrop-filter: blur(12px);
+      /* 宽度显式定死（三栏总宽），高度由「画布 + 按钮」算出来。
+         宽高都定了，三栏的内部分配才是确定的，不会随窗口乱变。 */
+      width: var(--stage-w);
+      height: var(--panel-h);
+      flex: none;
+    }
+
+    /* 左列：画布 + 操作按钮 */
+    .game-col {
+      display: flex;
+      flex-direction: column;
+      gap: var(--col-gap);
+      flex: none;
+    }
+
+    /* 游戏画布容器 */
+    .game-box {
+      position: relative;
+      width: var(--board);
+      height: var(--board);
+      flex: none;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #05070d;
+      box-shadow: inset 0 0 20px rgba(0, 255, 204, 0.05), 0 0 25px rgba(0, 0, 0, 0.9);
+      border: 1px solid rgba(0, 240, 255, 0.2);
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* 弹层覆盖物（开始界面 / 过关提示 / 通关结算 / 失败结算） */
+    .overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(5, 7, 13, 0.9);
+      backdrop-filter: blur(8px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+      transition: opacity 0.25s ease, visibility 0.25s ease;
+    }
+    .overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+      visibility: hidden;
+    }
+    .overlay-title {
+      font-size: 28px;
+      font-weight: 800;
+      margin-bottom: 8px;
+      text-align: center;
+      letter-spacing: 1px;
+    }
+    .overlay-sub {
+      font-size: 14px;
+      color: #9ca3af;
+      margin-bottom: 22px;
+      text-align: center;
+      max-width: 320px;
+      line-height: 1.6;
+    }
+    .overlay-badge {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 5px 14px;
+      border-radius: 9999px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      color: #cbd5e1;
+      margin-bottom: 16px;
+      letter-spacing: 0.5px;
+    }
+    .btn-glow {
+      padding: 12px 28px;
+      font-size: 15px;
+      font-weight: 700;
+      border: none;
+      border-radius: 9999px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      letter-spacing: 0.5px;
+    }
+    .btn-start {
+      background: linear-gradient(135deg, #00ffcc 0%, #0284c7 100%);
+      color: #0b0f19;
+      box-shadow: 0 0 25px rgba(0, 255, 204, 0.5);
+    }
+    .btn-start:hover {
+      transform: scale(1.05);
+      box-shadow: 0 0 35px rgba(0, 255, 204, 0.7);
+    }
+    .btn-win {
+      background: linear-gradient(135deg, #facc15 0%, #f97316 100%);
+      color: #0b0f19;
+      box-shadow: 0 0 25px rgba(250, 204, 21, 0.5);
+    }
+    /* 未配置引擎时按钮直接禁用，让「点不动」比点了没反应更好理解。
+       必须写在各 :hover 规则之后 —— 选择器优先级相同（都是 0,2,0），靠顺序取胜。 */
+    .btn-glow:disabled,
+    .btn-glow.is-disabled {
+      background: #1f2937;
+      color: #6b7280;
+      box-shadow: none;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .btn-glow:disabled:hover,
+    .btn-glow.is-disabled:hover {
+      transform: none;
+      box-shadow: none;
+    }
+    .btn-win:hover {
+      transform: scale(1.05);
+      box-shadow: 0 0 35px rgba(250, 204, 21, 0.7);
+    }
+    /* 危险色按钮（重新挑战）。用 class 而不是 inline style ——
+       inline style 的优先级会盖掉 :disabled 规则，禁用状态就失效了。 */
+    .btn-danger {
+      background: #f43f5e;
+      color: #fff;
+      box-shadow: 0 0 25px rgba(244, 63, 94, 0.5);
+    }
+    .btn-danger:hover {
+      transform: scale(1.05);
+      box-shadow: 0 0 35px rgba(244, 63, 94, 0.7);
+    }
+
+    /* 暂停角标 */
+    .pause-badge {
+      position: absolute;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 6px 18px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      background: rgba(250, 204, 21, 0.15);
+      color: #facc15;
+      border: 1px solid rgba(250, 204, 21, 0.45);
+      z-index: 15;
+      transition: opacity 0.2s ease, visibility 0.2s ease;
+    }
+    .pause-badge.hidden {
+      opacity: 0;
+      visibility: hidden;
+    }
+
+    /* 侧边仪表盘（可视化 AI 思考/决策过程） */
+    .dashboard {
+      width: var(--dash-w);
+      flex: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      /* 内容比左列高的时候自己内部滚，绝不把容器顶开 */
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 2px;
+    }
+    .dashboard::-webkit-scrollbar { width: 6px; }
+    .dashboard::-webkit-scrollbar-thumb { background: #1f2937; border-radius: 3px; }
+
+    /* 模式切换 */
+    .mode-selector {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .mode-btn {
+      width: 100%;
+      padding: 11px 13px;
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: 9px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.2s ease;
+      background: #1f2937;
+      color: #9ca3af;
+      text-align: left;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .mode-btn small { font-size: 10.5px; }
+    .mode-btn.active-manual {
+      background: rgba(59, 130, 246, 0.2);
+      color: #60a5fa;
+      border-color: #3b82f6;
+      box-shadow: 0 0 15px rgba(59, 130, 246, 0.4);
+    }
+    .mode-btn.active-jev {
+      background: rgba(0, 255, 204, 0.15);
+      color: #00ffcc;
+      border-color: #00ffcc;
+      box-shadow: 0 0 15px rgba(0, 255, 204, 0.3);
+    }
+    .mode-btn.active-llm {
+      background: rgba(244, 63, 94, 0.15);
+      color: #f43f5e;
+      border-color: #f43f5e;
+      box-shadow: 0 0 15px rgba(244, 63, 94, 0.3);
+    }
+
+    /* 状态面板 */
+    .stat-card {
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 9px;
+    }
+    .stat-header {
+      font-size: 11px;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .stat-value {
+      font-size: 18px;
+      font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      color: #38bdf8;
+    }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .pellet-line {
+      /* 面板高度是定死的，这几行全靠紧凑排布才塞得下，别加分割线 */
+      margin-top: 5px;
+      font-size: 11px;
+      color: #9ca3af;
+      display: flex;
+      justify-content: space-between;
+    }
+    .pellet-line b {
+      color: #fbbf24;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    /* 决策概率条 */
+    .decision-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin-top: 6px;
+    }
+    .decision-item {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .decision-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 600;
+      color: #d1d5db;
+    }
+    .progress-bar-bg {
+      width: 100%;
+      height: 6px;
+      background: #374151;
+      border-radius: 9999px;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: #00ffcc;
+      border-radius: 9999px;
+      transition: width 0.15s ease-out;
+      box-shadow: 0 0 8px #00ffcc;
+    }
+
+    /* 底部操作按钮 */
+    .actions {
+      display: flex;
+      gap: 8px;
+      height: var(--actions-h);
+      flex: none;
+    }
+    .action-btn {
+      flex: 1;
+      padding: 0 4px;
+      border-radius: 8px;
+      background: #1f2937;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: white;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .action-btn:hover {
+      background: #374151;
+    }
+    .action-btn.muted {
+      color: #6b7280;
+      background: #171f2e;
+    }
+
+    /* 连接状态小圆点 */
+    .status-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #6b7280;
+      margin-right: 5px;
+      vertical-align: middle;
+      flex: none;
+    }
+    .status-dot.ok { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+    .status-dot.err { background: #f43f5e; box-shadow: 0 0 8px #f43f5e; }
+    /* 未配置 = 灰色待机点。红色只留给真正的调用失败，两件事不要混成一个颜色 */
+    .status-dot.off { background: #4b5563; box-shadow: none; }
+    .status-dot.busy { background: #facc15; box-shadow: 0 0 8px #facc15; animation: pulse 0.7s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+    /* 错误横幅 */
+    .error-banner {
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      bottom: 10px;
+      padding: 9px 12px;
+      border-radius: 8px;
+      background: rgba(244, 63, 94, 0.94);
+      color: #fff;
+      font-size: 11px;
+      line-height: 1.5;
+      z-index: 25;
+      word-break: break-word;
+      max-height: 42%;
+      overflow-y: auto;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+    }
+    .error-banner.hidden { display: none; }
+    .error-banner b { display: block; margin-bottom: 3px; }
+
+    /* 模型实际收到的 state（可视化「决策引擎如何告诉模型」） */
+    .prompt-viewer {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 10px;
+      line-height: 1.45;
+      color: #a5b4fc;
+      background: #0b0f19;
+      border: 1px solid #1f2937;
+      border-radius: 8px;
+      padding: 9px;
+      white-space: pre;
+      overflow: auto;
+      /* 跟着面板高度伸缩，别写死像素 —— 布局高度是定死的 */
+      max-height: 18vh;
+      margin-top: 6px;
+    }
+    .prompt-viewer::-webkit-scrollbar { width: 6px; height: 6px; }
+    .prompt-viewer::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+
+    /* ===== 决策日志终端（实时滚动，科幻片那种） ===== */
+    .console {
+      position: relative;
+      /* 基准宽度是 --console-w；画布被高度夹住（矮屏）时多出来的宽度由它吸收。
+         容器总宽是显式定死的，所以这里的 grow 是有界的，不会再出现
+         「宽屏上被撑到 max-width」那种失控。 */
+      flex: 1 1 var(--console-w);
+      max-width: 460px;
+      /* 高度由 .container 定死，日志永远在里面滚，不参与撑高 */
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      background: linear-gradient(180deg, #05070d 0%, #070b14 100%);
+      border: 1px solid rgba(0, 240, 255, 0.25);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: inset 0 0 30px rgba(0, 255, 204, 0.045), 0 0 25px rgba(0, 0, 0, 0.8);
+    }
+
+    /* CRT 扫描线 + 顶部辉光，纯装饰 */
+    .console::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        180deg,
+        rgba(0, 255, 204, 0.028) 0px,
+        rgba(0, 255, 204, 0.028) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+      mix-blend-mode: screen;
+    }
+
+    .console-head {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 8px 7px;
+      background: rgba(0, 255, 204, 0.05);
+      border-bottom: 1px solid rgba(0, 240, 255, 0.2);
+      flex: none;
+      z-index: 1;
+    }
+    .console-title {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10px;
+      letter-spacing: 1px;
+      color: #00ffcc;
+      text-transform: uppercase;
+      text-shadow: 0 0 8px rgba(0, 255, 204, 0.5);
+      white-space: nowrap;
+    }
+    .console-count {
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 9px;
+      color: #4b5563;
+      margin-left: auto;
+      white-space: nowrap;
+    }
+    .console-clear {
+      font-size: 10px;
+      font-family: ui-monospace, Menlo, monospace;
+      color: #6b7280;
+      background: transparent;
+      border: 1px solid #374151;
+      border-radius: 4px;
+      padding: 2px 6px;
+      cursor: pointer;
+      flex: none;
+    }
+    .console-clear:hover { color: #00ffcc; border-color: #00ffcc; }
+
+    /* 顶部那颗呼吸的「在线」灯 */
+    .livedot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #00ffcc;
+      box-shadow: 0 0 8px #00ffcc;
+      flex: none;
+      animation: pulse 1.7s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.3; transform: scale(0.78); }
+    }
+
+    .console-body {
+      flex: 1 1 auto;
+      /* flex 子项默认 min-height:auto，会被内容撑开而不是滚动 ——
+         少了这行，日志区会一路长高然后被 .console 的 overflow:hidden 裁掉，
+         表现就是「新日志永远不出现」。这个 0 是必须的。 */
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      /* 左右内边距特意压到 6px：日志列很窄，横向每一像素都要留给正文 */
+      padding: 8px 6px 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 10.5px;
+      line-height: 1.62;
+      z-index: 1;
+    }
+    .console-body::-webkit-scrollbar { width: 7px; }
+    .console-body::-webkit-scrollbar-track { background: #05070d; }
+    .console-body::-webkit-scrollbar-thumb { background: #1f2937; border-radius: 4px; }
+    .console-body::-webkit-scrollbar-thumb:hover { background: #374151; }
+
+    .log-line {
+      display: flex;
+      gap: 4px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      animation: logIn 0.22s ease-out;
+    }
+    @keyframes logIn {
+      from { opacity: 0; transform: translateX(-5px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+    .log-time { color: #374151; flex: none; }
+    .log-tag {
+      flex: none;
+      width: 27px;
+      text-align: right;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+    .log-body { flex: 1 1 auto; min-width: 0; }
+
+    .t-req  { color: #22d3ee; }
+    .t-res  { color: #00ffcc; }
+    .t-mov  { color: #e5e7eb; }
+    .t-blk  { color: #f43f5e; }
+    .t-gho  { color: #a855f7; }
+    .t-eat  { color: #facc15; }
+    .t-lvl  { color: #fbbf24; }
+    .t-sys  { color: #6b7280; }
+    .t-err  { color: #ef4444; }
+
+    .c-req  { color: #67e8f9; }
+    .c-res  { color: #00ffcc; }
+    .c-mov  { color: #d1d5db; }
+    .c-blk  { color: #fb7185; }
+    .c-gho  { color: #c084fc; }
+    .c-eat  { color: #fde047; }
+    .c-lvl  { color: #fcd34d; }
+    .c-sys  { color: #6b7280; }
+    .c-err  { color: #f87171; }
+    .c-dim  { color: #4b5563; }
+    .c-hi   { color: #fff; font-weight: 700; }
+
+    /* 底部光标，不停闪，就很有味 */
+    .log-cursor {
+      display: inline-block;
+      width: 7px;
+      height: 12px;
+      background: #00ffcc;
+      vertical-align: text-bottom;
+      animation: blink 1.05s step-end infinite;
+      box-shadow: 0 0 8px #00ffcc;
+    }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+    /* 用户往上翻的时候，别硬把他拽回底部 */
+    .log-jump {
+      position: absolute;
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 10px;
+      font-family: ui-monospace, Menlo, monospace;
+      color: #0b0f19;
+      background: #00ffcc;
+      border: none;
+      border-radius: 10px;
+      padding: 3px 11px;
+      cursor: pointer;
+      box-shadow: 0 0 14px rgba(0, 255, 204, 0.55);
+      z-index: 3;
+    }
+    .log-jump.hidden { display: none; }
+
+    /* 画布尺寸已经由 --board 的 min() 自适应（宽度、高度、上限三者取小），
+       这里只需要在窄窗口下把两侧面板挤瘦一点，别让日志被压到不可读 */
+    /* 画布尺寸由 --board 自适应，这里面板只用管「窗口太小时把侧栏挤瘦一点」，
+       保证画布不会被压到没法玩 */
+    @media (max-width: 1150px) {
+      :root { --dash-w: 236px; --console-w: 200px; --gap: 10px; --pad: 12px; }
+    }
+    @media (max-width: 950px) {
+      .dashboard { display: none; }
+      :root { --side-w: var(--console-w); }
+    }
+
+    /* ---------- 被 hub 用 iframe 嵌进来时（?embed=1）----------
+       页头页脚由 hub 提供（样式是同一套），所以这里必须藏掉自己那套，
+       否则页面上会出现两条一模一样的大标题。
+
+       ⚠ 这个类必须挂在 <html> 上（不是 <body>），而且覆盖也要写在 html.embed 里。
+       CSS 自定义属性是在「声明它的那个元素」上就把 var() 替换掉的：
+       --board / --panel-h 声明在 :root，它们引用到的 --stage-w / --chrome-h
+       在那一刻就定死了，后代元素再怎么改 --stage-w 也影响不到 --board
+       （继承下来的是算好的结果，不是表达式）。
+       挂在 <html> 上就和 :root 是同一个元素，覆盖才真的生效。
+
+       剩下四处调整，都是为了「iframe 里不出现滚动条、尺寸还跟外面严丝合缝」：
+         · --stage-w 换 100vw：container 直接铺满 iframe 的宽度；
+         · --pad 归零 + 去掉 container 自身的背景/描边：hub 那边已经给了一圈边框，
+           这里再留内边距就等于套了两层，画布会被挤小一圈。
+           ⚠ 必须写 0px 不能写 0：--board / --panel-h 里有 `2 * var(--pad)`，
+           而无单位数字和长度在 calc() 里不能相加相减，写成 0 会让整条公式
+           在 computed-value 阶段被判非法、width: var(--board) 被整条丢掉，
+           表现就是画布尺寸彻底失控（实测会涨到 900 多像素）。
+         · --chrome-h 从 250px 收到 54px：页头页脚没了，画布之外只剩
+           画布与按钮的间距(12) + 按钮那行(40) + panel-h 里那个 2px。
+           注意是 --col-gap 的 12，不是 --gap 的 10，这俩不是一回事。
+           54 是算出来的：hub 给的 iframe 高度正好是「画布 + 54」，
+           所以下面 .container 那个 height: 100vh 是「钉死」而不是「拉伸」。
+         · 侧栏锁死成窄档 —— 见下面的注释。 */
+    html.embed {
+      --stage-w: 100vw;
+      --pad: 0px;
+      --chrome-h: 54px;
+      /* 侧栏锁死成窄档，不跟视口宽度在宽/窄两套值之间跳。
+         原因：hub 那边要预估画布尺寸才能给 iframe 定高，预估用的是固定常量。
+         如果这里跟着 @media 切换，某个宽度区间上两边就会用不同的数 —— 估矮了
+         把游戏底部裁掉一条，估高了底部留一截空白。
+         锁成一套之后，「content 宽度 → 画布尺寸」在任何窗口下都是同一个公式。
+         顺带画布也更大：窄档侧栏更窄，省下的宽度全归画布。
+         改这里就要同步改 hub/static/hub.css 的 --pac-* 那组常量。 */
+      --dash-w: 236px;
+      --console-w: 200px;
+      --gap: 10px;
+    }
+
+    html.embed header,
+    html.embed footer { display: none; }
+
+    html.embed body {
+      min-height: 100vh;
+      justify-content: flex-start;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    html.embed .container {
+      background: none;
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+      backdrop-filter: none;
+      height: 100vh;
+    }
+
+    /* 配置弹窗 */
+    .config-mask {
+      position: fixed;
+      inset: 0;
+      background: rgba(3, 5, 10, 0.78);
+      backdrop-filter: blur(6px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      padding: 20px;
+    }
+    .config-mask.hidden { display: none; }
+    /* 面板本身不滚，改成「标题固定 + 中间滚动 + 底部按钮固定」，
+       否则内容一长就把保存/取消顶到可视区外面去。 */
+    .config-panel {
+      width: min(780px, 100%);
+      max-width: 100%;
+      max-height: 88vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: #111827;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      padding: 22px;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8);
+    }
+    .config-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 4px;
+      margin-right: -4px;
+    }
+    .config-body::-webkit-scrollbar { width: 8px; }
+    .config-body::-webkit-scrollbar-thumb { background: #1f2937; border-radius: 4px; }
+    .config-body::-webkit-scrollbar-thumb:hover { background: #374151; }
+    /* 跑起来环境对不对，一眼就能看到，不用去猜「Failed to fetch」是什么意思 */
+    .cfg-diag {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      align-items: center;
+      font-size: 11px;
+      line-height: 1.7;
+      padding: 9px 11px;
+      margin-bottom: 14px;
+      border-radius: 8px;
+      border: 1px solid #1f2937;
+      background: #0b0f19;
+      color: #9ca3af;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      word-break: break-all;
+    }
+    .cfg-diag b { color: #e5e7eb; font-weight: 600; }
+    .cfg-diag .ok  { color: #22c55e; }
+    .cfg-diag .bad { color: #f43f5e; }
+    .config-panel h2 {
+      font-size: 17px;
+      margin-bottom: 4px;
+    }
+    .config-panel .hint {
+      font-size: 11px;
+      color: #6b7280;
+      margin-bottom: 16px;
+      line-height: 1.6;
+    }
+    .cfg-section {
+      border: 1px solid #1f2937;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    .cfg-section:last-child { margin-bottom: 0; }
+    .cfg-section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .cfg-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 9px;
+    }
+    /* 只选「字段名」那种 label。不加 :not(.cfg-check) 的话，
+       单选按钮的 <label class="cfg-check"> 也会被这条 width 锁死成 72px。 */
+    .cfg-row > label:not(.cfg-check) {
+      width: 72px;
+      flex: none;
+      font-size: 11px;
+      color: #9ca3af;
+    }
+    /* 单选项整体铺满一行 */
+    .cfg-check-list { flex: 1; min-width: 0; }
+    .cfg-row-top { align-items: flex-start; }
+    .cfg-row-top > label:not(.cfg-check) { padding-top: 7px; width: 60px; }
+    .cfg-row input {
+      flex: 1;
+      min-width: 0;
+      background: #0b0f19;
+      border: 1px solid #374151;
+      border-radius: 6px;
+      color: #f3f4f6;
+      font-size: 11px;
+      padding: 7px 9px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .cfg-row input:focus {
+      outline: none;
+      border-color: #00ffcc;
+      box-shadow: 0 0 0 2px rgba(0, 255, 204, 0.15);
+    }
+    .cfg-row input::placeholder { color: #4b5563; }
+    /* base url 旁边的来源标记：让「预填」这件事看得见，别和灰色 placeholder 混淆 */
+    .cfg-src {
+      flex: none;
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 9999px;
+      border: 1px solid #374151;
+      color: #6b7280;
+      white-space: nowrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .cfg-src.user { color: #00ffcc; border-color: rgba(0, 255, 204, 0.35); }
+    .cfg-src.env  { color: #60a5fa; border-color: rgba(96, 165, 250, 0.35); }
+    .cfg-test {
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid #374151;
+      background: #1f2937;
+      color: #d1d5db;
+      font-size: 11px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .cfg-test:hover { background: #374151; }
+    .cfg-status {
+      font-size: 11px;
+      margin-top: 4px;
+      min-height: 16px;
+      line-height: 1.5;
+      word-break: break-word;
+      white-space: pre-line;   /* 报错里带换行，两行比一行挤在一起好读 */
+    }
+    .cfg-status.ok { color: #22c55e; }
+    .cfg-status.err { color: #f43f5e; }
+    /* 底部按钮固定在面板底部，不跟着 config-body 滚 */
+    .cfg-foot {
+      flex: none;
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid #1f2937;
+    }
+    .cfg-foot button {
+      padding: 9px 20px;
+      border-radius: 8px;
+      border: none;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .cfg-foot .primary { background: linear-gradient(135deg, #00ffcc, #0284c7); color: #0b0f19; }
+    .cfg-foot .ghost { background: #1f2937; color: #d1d5db; }
+
+    /* 复选行 */
+    .cfg-check {
+      display: flex;
+      gap: 9px;
+      align-items: flex-start;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .cfg-check > span { flex: 1; min-width: 0; }
+    .cfg-check input {
+      margin-top: 2px;
+      width: 14px;
+      height: 14px;
+      accent-color: #00ffcc;
+      flex: none;
+      cursor: pointer;
+    }
+    .cfg-check input[type="radio"] { border-radius: 50%; }
+    .cfg-check b { display: block; color: #e5e7eb; margin-bottom: 3px; }
+    .cfg-check em {
+      font-style: normal;
+      font-size: 11px;
+      color: #6b7280;
+      line-height: 1.55;
+      display: block;
+    }
+
+    /* 通用确认弹窗（切换引擎前问一句）。遮罩复用 .config-mask 的样式，
+       面板比配置弹窗窄很多 —— 这里只有一句话和两个按钮，撑宽了反而不好读。 */
+    .confirm-panel {
+      width: min(430px, 100%);
+      background: #111827;
+      border: 1px solid rgba(244, 63, 94, 0.32);
+      border-radius: 16px;
+      padding: 22px;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.85), 0 0 32px rgba(244, 63, 94, 0.12);
+    }
+    .confirm-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: #f3f4f6;
+      margin-bottom: 10px;
+    }
+    .confirm-text {
+      font-size: 12.5px;
+      line-height: 1.75;
+      color: #9ca3af;
+    }
+    .confirm-text b { color: #e5e7eb; font-weight: 600; }
+    .confirm-text .warn { color: #f43f5e; }
+    .confirm-foot {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 18px;
+    }
+    .confirm-foot button {
+      padding: 9px 18px;
+      border-radius: 8px;
+      border: none;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: filter 0.2s ease;
+    }
+    .confirm-foot button:hover { filter: brightness(1.15); }
+    .confirm-foot .keep { background: #1f2937; color: #d1d5db; }
+    .confirm-foot .drop { background: #f43f5e; color: #fff; }
+  </style>
+  <!-- 简繁切换器。路径写成 ../zh/ —— 门户页把本页挂在 /pacman/ 下、
+       单独跑本页的 server.py 时又在根目录，两种情况都会解析到 /zh/。
+       全局只有一份，放在项目根的 zh/ 里，由各自的 server.py 转发。 -->
+  <link rel="stylesheet" href="../zh/zh.css" />
+</head>
+<body>
+
+  <header>
+    <div class="head-left">
+      <div class="badge">TYPESAFE JEV vs TRADITIONAL LLM</div>
+      <h1>AI 极速决策实测：赛博霓虹吃豆人</h1>
+    </div>
+    <a class="channel" href="https://www.youtube.com/@j-AI99" target="_blank" rel="noopener noreferrer">
+      <span class="channel-ico">▶</span>
+      <span class="channel-name">静电的AI研习社</span>
+      <span class="channel-handle">@j-AI99</span>
+    </a>
+  </header>
+
+  <div class="container">
+    <!-- 左列：画布 + 操作按钮。按钮放这儿，容器高度就只由「画布 + 按钮」决定，
+         日志框和仪表盘跟着这个高度走，不会被撑成整屏那么高。 -->
+    <div class="game-col">
+      <!-- 游戏主画布容器 -->
+      <div class="game-box">
+        <!-- 画布真实分辨率由 JS 按 RENDER_SCALE 设定，CSS 只负责显示尺寸 -->
+      <canvas id="gameCanvas"></canvas>
+
+        <!-- 暂停角标 -->
+        <div id="pauseBadge" class="pause-badge hidden">⏸ 已暂停 (空格继续)</div>
+
+        <!-- AI 调用失败提示 -->
+        <div id="errorBanner" class="error-banner hidden"></div>
+
+        <!-- 1. 开始游戏遮罩：三种模式共用 -->
+        <div id="startOverlay" class="overlay">
+          <div class="overlay-badge" id="startModeBadge">当前模式：⚡ Jev 决策模型</div>
+          <div class="overlay-title" style="color: #00ffcc;">READY PLAYER ONE</div>
+          <div class="overlay-sub" id="startSubText">
+            点击下方按钮开始游戏<br>手工模式请用 WASD / 方向键操控
+          </div>
+          <button id="startBtn" class="btn-glow btn-start" onclick="startGame()">▶ 开始游戏 (START)</button>
+        </div>
+
+        <!-- 2. 过关提示遮罩（吃光本关所有豆子触发） -->
+        <div id="levelOverlay" class="overlay hidden">
+          <div class="overlay-badge" id="levelBadge">第 1 关</div>
+          <div class="overlay-title" style="color: #00ffcc;">🎉 LEVEL CLEAR</div>
+          <div class="overlay-sub" id="levelSubText">过关！下一关幽灵会更快、数量更多。</div>
+          <button id="nextBtn" class="btn-glow btn-start" onclick="nextLevel()">▶ 进入下一关 (NEXT)</button>
+        </div>
+
+        <!-- 3. 全部通关结算遮罩 -->
+        <div id="winOverlay" class="overlay hidden">
+          <div class="overlay-badge" id="winBadge">最终结算</div>
+          <div class="overlay-title" style="color: #facc15;">🏆 ALL CLEARED!</div>
+          <div class="overlay-sub" id="winSubText">恭喜！全部关卡豆子已吃光！</div>
+          <button id="winBtn" class="btn-glow btn-win" onclick="startGame()">🔄 再玩一局 (REPLAY)</button>
+        </div>
+
+        <!-- 4. 游戏失败遮罩 -->
+        <div id="loseOverlay" class="overlay hidden">
+          <div class="overlay-badge" id="loseBadge">模式：⚡ Jev 决策模型</div>
+          <div class="overlay-title" style="color: #f43f5e;">💥 GAME OVER</div>
+          <div class="overlay-sub" id="loseSubText">吃豆人被幽灵捕获！</div>
+          <button id="retryBtn" class="btn-glow btn-danger" onclick="startGame()">🔄 重新挑战 (RETRY)</button>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="pauseBtn" class="action-btn" onclick="togglePause()">⏸ 暂停</button>
+        <button id="muteBtn" class="action-btn" onclick="toggleMute()">🔊 音效</button>
+        <button class="action-btn" onclick="openConfig()">⚙ 配置</button>
+        <button class="action-btn" onclick="resetGameToStart()">🏠 重置</button>
+      </div>
+    </div>
+
+    <!-- 侧边仪表盘（可视化 AI 思考/决策过程） -->
+    <div class="dashboard">
+      <div>
+        <div class="stat-header">决策控制模式 (ENGINE)</div>
+        <div class="mode-selector">
+          <button id="btnManual" class="mode-btn" onclick="switchMode('manual')">
+            <span>🎮 纯手工操控</span><small style="opacity: 0.7;">WASD / 方向键</small>
+          </button>
+          <button id="btnJev" class="mode-btn active-jev" onclick="switchMode('jev')">
+            <span><i class="status-dot" id="dotJev"></i>⚡ Jev 决策模型</span><small id="subJev" style="opacity: 0.7;">毫秒级快思考</small>
+          </button>
+          <button id="btnLlm" class="mode-btn" onclick="switchMode('llm')">
+            <span><i class="status-dot" id="dotLlm"></i>🐌 传统 LLM</span><small id="subLlm" style="opacity: 0.7;">逐字慢速卡顿</small>
+          </button>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-grid">
+            <div>
+              <div class="stat-header">本次决策延迟</div>
+              <div id="latencyVal" class="stat-value" style="color: #00ffcc; font-size: 15px;">— </div>
+            </div>
+            <div>
+              <div class="stat-header">平均延迟 / 调用数</div>
+              <div id="avgVal" class="stat-value" style="color: #22d3ee; font-size: 15px;">— / 0</div>
+            </div>
+            <div>
+              <div class="stat-header">当前关卡</div>
+              <div id="levelVal" class="stat-value" style="color: #c4b5fd; font-size: 15px;">LV 1 / 5</div>
+            </div>
+            <div>
+              <div class="stat-header">累计得分</div>
+              <div id="scoreVal" class="stat-value" style="color: #fbbf24; font-size: 15px;">0</div>
+            </div>
+          </div>
+          <div class="pellet-line">
+            <span>剩余豆子</span>
+            <span><b id="pelletVal">0 / 0</b></span>
+          </div>
+          <div class="pellet-line">
+            <span>幽灵数量 / 模型</span>
+            <span><b id="ghostVal">2</b> · <b id="modelVal">—</b></span>
+          </div>
+          <div class="pellet-line">
+            <span>当前节奏</span>
+            <span><b id="pacingVal">—</b></span>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-header">当前执行按键 (ACTION)</div>
+          <div id="actionVal" class="stat-value" style="color: #facc15;">READY</div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-header" id="confHeader">模型返回的概率分布 (CONFIDENCE)</div>
+          <div class="decision-list">
+            <div class="decision-item">
+              <div class="decision-label"><span>UP</span><span id="p-UP">0%</span></div>
+              <div class="progress-bar-bg"><div id="bar-UP" class="progress-bar-fill"></div></div>
+            </div>
+            <div class="decision-item">
+              <div class="decision-label"><span>DOWN</span><span id="p-DOWN">0%</span></div>
+              <div class="progress-bar-bg"><div id="bar-DOWN" class="progress-bar-fill"></div></div>
+            </div>
+            <div class="decision-item">
+              <div class="decision-label"><span>LEFT</span><span id="p-LEFT">0%</span></div>
+              <div class="progress-bar-bg"><div id="bar-LEFT" class="progress-bar-fill"></div></div>
+            </div>
+            <div class="decision-item">
+              <div class="decision-label"><span>RIGHT</span><span id="p-RIGHT">0%</span></div>
+              <div class="progress-bar-bg"><div id="bar-RIGHT" class="progress-bar-fill"></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-header" style="display: flex; justify-content: space-between;">
+            <span>发给模型的 STATE (PROMPT)</span>
+            <span id="promptToggle" onclick="togglePromptViewer()" style="cursor: pointer; color: #00ffcc; text-transform: none;">收起</span>
+          </div>
+          <div id="promptViewer" class="prompt-viewer">等待第一次调用…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 决策日志终端：模型每一次问答、落步、幽灵动向都在这里实时滚 -->
+    <div class="console">
+      <div class="console-head">
+        <i class="livedot"></i>
+        <span class="console-title" title="Decision Stream">STREAM</span>
+        <span class="console-count" id="logCount">0</span>
+        <!-- 简繁切换按钮由 zh.js 填进来。放这里是因为门户页嵌入时会藏掉本页页头，
+             而日志终端在任何情况下都可见；这个尺寸也不会撑高 console-head。 -->
+        <span data-zh-slot="sm"></span>
+        <button class="console-clear" title="清空日志" onclick="Log.clear()">清空</button>
+      </div>
+      <div class="console-body" id="logStream"></div>
+      <button class="log-jump hidden" id="logJump" onclick="Log.jumpToEnd()">↓ 有新日志</button>
+    </div>
+  </div>
+
+  <!-- 页脚：只留版权声明。频道署名已经提到标题上方，这里不用再重复一遍 -->
+  <footer>
+    <span class="credit">© 2026 <b>静电的AI研习社</b> · 保留所有权利</span>
+  </footer>
+
+  <!-- 配置弹窗：base url / key / model 都可以随时改 -->
+  <div id="configMask" class="config-mask hidden">
+    <div class="config-panel">
+      <h2>接口配置</h2>
+      <div class="hint">
+        base url / model 会预填成服务端 <code>.env</code> 的默认值，随时可以改；改完只存在浏览器 localStorage 里。<br>
+        <b style="color:#9ca3af;">API key 不放在页面里</b> —— 它留在服务端 <code>.env</code>（
+        <code>TYPESAFE_API_KEY</code> / <code>LLM_API_KEY</code>），页面只拿到掩码；
+        只有你在这里手动填了 key，它才会存进 localStorage。<br>
+        请求统一经由本地服务 <code id="proxyHint">/api/*</code> 转发 —— Jev 的 API 不允许浏览器跨域直连（预检会被拒），这是预期行为。
+      </div>
+      <div class="cfg-diag" id="cfgDiag"></div>
+
+      <div class="config-body">
+
+      <div class="cfg-section">
+        <div class="cfg-section-head">
+          <span style="color: #00ffcc;">⚡ Jev (TypeSafe)</span>
+          <span id="dotJevCfg" style="font-size: 11px; font-weight: 400;"></span>
+        </div>
+        <div class="cfg-row">
+          <label>Base URL</label>
+          <input id="cfgJevBase" type="text" placeholder="https://api.typesafe.ai" spellcheck="false">
+          <span class="cfg-src" id="cfgJevBaseSrc"></span>
+        </div>
+        <div class="cfg-row">
+          <label>API Key</label>
+          <input id="cfgJevKey" type="password" placeholder="留空则用服务端 .env 里的 key" spellcheck="false">
+        </div>
+        <div class="cfg-row">
+          <label>Model</label>
+          <input id="cfgJevModel" type="text" placeholder="jev-latest" spellcheck="false">
+          <button class="cfg-test" onclick="testConnection('jev')">测试连接</button>
+        </div>
+        <div class="cfg-status" id="cfgJevStatus"></div>
+      </div>
+
+      <div class="cfg-section">
+        <div class="cfg-section-head">
+          <span style="color: #f43f5e;">🐌 传统 LLM (OpenAI 兼容)</span>
+          <span id="dotLlmCfg" style="font-size: 11px; font-weight: 400;"></span>
+        </div>
+        <div class="cfg-row">
+          <label>Base URL</label>
+          <input id="cfgLlmBase" type="text" placeholder="https://api.openai.com/v1" spellcheck="false">
+          <span class="cfg-src" id="cfgLlmBaseSrc"></span>
+        </div>
+        <div class="cfg-row">
+          <label>API Key</label>
+          <input id="cfgLlmKey" type="password" placeholder="sk-..." spellcheck="false">
+        </div>
+        <div class="cfg-row">
+          <label>Model</label>
+          <input id="cfgLlmModel" type="text" placeholder="gpt-4o-mini" spellcheck="false">
+          <button class="cfg-test" onclick="testConnection('llm')">测试连接</button>
+        </div>
+        <div class="cfg-status" id="cfgLlmStatus"></div>
+      </div>
+
+      <div class="cfg-section">
+        <div class="cfg-section-head">
+          <span style="color: #facc15;">🎮 对局节奏</span>
+        </div>
+        <div class="cfg-row cfg-row-top">
+          <label>步频</label>
+          <div class="cfg-check-list">
+            <label class="cfg-check" style="margin-bottom: 8px;">
+              <input type="radio" name="cfgPacing" value="adaptive">
+              <span>
+                <b>回合制 · 幽灵按回合走（推荐）</b>
+                <em>每走一格问一次模型，等它想完再落这一步。幽灵每 2 个回合走一格，所以模型思考多久都不影响难度 ——
+                延迟只决定这一局打多久，比的是纯粹的决策质量。用来看 Jev vs LLM 谁的判断力更强。</em>
+              </span>
+            </label>
+            <label class="cfg-check">
+              <input type="radio" name="cfgPacing" value="realtime">
+              <span>
+                <b>实时 · 幽灵按真实时间走</b>
+                <em>幽灵固定 290ms 一格，模型在思考的时候幽灵照走。每多想一会儿就白送幽灵几步 ——
+                直观展示为什么毫秒级响应重要，但慢模型基本活不过十秒。</em>
+              </span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      </div><!-- /config-body -->
+
+      <div class="cfg-foot">
+        <button class="ghost" onclick="closeConfig()">取消</button>
+        <button class="primary" onclick="saveConfig()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 切换引擎前的确认弹窗：对局进行中直接换引擎会把这一局作废，先问一句 -->
+  <div id="confirmMask" class="config-mask hidden" onclick="if (event.target === this) cancelModeSwitch()">
+    <div class="confirm-panel">
+      <div class="confirm-title" id="confirmTitle">终止当前对局？</div>
+      <div class="confirm-text" id="confirmText"></div>
+      <div class="confirm-foot">
+        <button class="keep" onclick="cancelModeSwitch()">继续当前对局 (ESC / 空格)</button>
+        <button class="drop" onclick="confirmModeSwitch()">终止并切换 (ENTER)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 简繁切换器：先词表、再逻辑，都排在页面自己的脚本之前。
+       放在这里（而不是 </body> 前）是因为页面脚本要调用 ZH.onChange 去作废
+       霓虹图层缓存，那时 ZH 必须已经存在；同时这个位置 body 已经解析完，
+       zh.js 可以同步把静态文案换掉，不会先闪一下简体。 -->
+  <script src="../zh/opencc-cn2t.js"></script>
+  <script src="../zh/zh.js"></script>
+
+  <script>
+    /* =========================================================================
+     *  1. 音频引擎：全部用 Web Audio 实时合成，无需任何外部音频资源
+     *
+     *  关于里面的几段旋律：都是照着 8-bit 街机音乐的风格写的原创小曲，
+     *  没有引 Namco 的原版旋律（那属于有版权的乐曲）。想换曲子只改音名即可。
+     * ========================================================================= */
+
+    // 音名 → 频率。写成 C4 / F#5 / A#3 这种，比手算 440*2^(n/12) 好改太多。
+    const NOTE_BASE = {
+      C: 0, 'C#': 1, D: 2, 'D#': 3, E: 4, F: 5,
+      'F#': 6, G: 7, 'G#': 8, A: 9, 'A#': 10, B: 11,
+    };
+
+    function noteFreq(name) {
+      const m = /^([A-G]#?)(-?\d)$/.exec(name);
+      if (!m) return 440;
+      const midi = NOTE_BASE[m[1]] + (parseInt(m[2], 10) + 1) * 12;
+      return 440 * Math.pow(2, (midi - 69) / 12);
+    }
+
+    const SoundFX = {
+      ctx: null,
+      master: null,
+      music: null,
+      muted: false,
+      wakaFlip: false,
+
+      // 必须由用户手势触发才能创建 AudioContext（浏览器自动播放策略）
+      init() {
+        if (this.ctx) return;
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        this.ctx = new AC();
+        this.master = this.ctx.createGain();
+        this.master.gain.value = this.muted ? 0 : 0.45;
+        this.master.connect(this.ctx.destination);
+      },
+
+      resume() {
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      },
+
+      // 单个音色
+      tone(freq, dur, type = 'square', vol = 0.2, when = 0, glideTo = null) {
+        if (!this.ctx || this.muted) return;
+        const t0 = this.ctx.currentTime + when;
+        const osc = this.ctx.createOscillator();
+        const g = this.ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, t0);
+        if (glideTo) {
+          osc.frequency.exponentialRampToValueAtTime(Math.max(1, glideTo), t0 + dur);
+        }
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(vol, t0 + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        osc.connect(g);
+        g.connect(this.master);
+        osc.start(t0);
+        osc.stop(t0 + dur + 0.03);
+      },
+
+      // 吃豆子的 "wakka wakka"
+      playWaka() {
+        this.wakaFlip = !this.wakaFlip;
+        this.tone(this.wakaFlip ? 680 : 430, 0.07, 'square', 0.15);
+      },
+
+      // 乐句调度：按「音名 + 时值」把一串音排好队交给 tone()。
+      // 时值单位是秒；每个音留 8% 的间隙，不然方波连在一起会糊成一片。
+      // 返回整句总时长，方便调用方安排后续动作（比如垫在末尾的收尾音）。
+      melody(notes, { type = 'square', vol = 0.2, at = 0 } = {}) {
+        let t = at;
+        for (const [name, dur] of notes) {
+          this.tone(noteFreq(name), dur * 0.92, type, vol, t);
+          t += dur;
+        }
+        return t - at;
+      },
+
+      // 开局号角：上行冲刺 → 高音颤音 → 收束，街机开机那条经典曲线。
+      // 原创旋律（D 大调），不是 Namco 原版。
+      playStart() {
+        const lead = [
+          // 十六分音符一路冲上去
+          ['D5', 0.075], ['E5', 0.075], ['F#5', 0.075], ['G5', 0.075],
+          ['A5', 0.075], ['B5', 0.075], ['C#6', 0.075], ['D6', 0.15],
+          // 高音颤音，街机味主要来自这里
+          ['A5', 0.06], ['B5', 0.06], ['A5', 0.06], ['B5', 0.06],
+          ['A5', 0.06], ['B5', 0.06], ['C#6', 0.22],
+          // 收束到主音
+          ['F#5', 0.11], ['A5', 0.11], ['D6', 0.4],
+        ];
+        // 低音铺底：给号角一点厚度，不然单条方波太单薄
+        const bass = [
+          ['D3', 0.3], ['D3', 0.3], ['A2', 0.3], ['B2', 0.3],
+          ['G2', 0.3], ['A2', 0.3], ['D3', 0.46],
+        ];
+        const leadDur = this.melody(lead, { type: 'square', vol: 0.2 });
+        const bassDur = this.melody(bass, { type: 'triangle', vol: 0.15 });
+        // 返回两者里更长的那个：低音比主旋律长，只按主旋律算的话
+        // 背景警笛会提前插进来，把尾巴盖掉。
+        return Math.max(leadDur, bassDur);
+      },
+
+      // 失败：三阶下行的哀鸣，每一阶都比上一阶低，最后闷一声收尾。
+      // 同样是原创，风格参考 8-bit 街机的 game over。
+      playDeath() {
+        const seq = [
+          ['G5', 0.15], ['F#5', 0.15], ['F5', 0.15], ['E5', 0.3],
+          ['E5', 0.15], ['D#5', 0.15], ['D5', 0.15], ['C#5', 0.3],
+          ['D5', 0.15], ['C#5', 0.15], ['C5', 0.15], ['B4', 0.5],
+        ];
+        const dur = this.melody(seq, { type: 'square', vol: 0.22 });
+        // 底下垫一条缓慢下坠的锯齿波，模拟机器泄气的感觉
+        this.tone(500, 0.8, 'sawtooth', 0.13, 0.02, 130);
+        // 最后一下闷响：整首停在最低点。它比主旋律多拖 0.55s，一并算进总时长
+        const thudAt = dur - 0.4;
+        this.tone(85, 0.95, 'sawtooth', 0.24, thudAt, 40);
+        return thudAt + 0.95;
+      },
+
+      // 过关提示音（上行）
+      playLevelClear() {
+        [659.25, 783.99, 987.77, 1318.5, 1567.98].forEach((f, i) => {
+          this.tone(f, 0.16, 'triangle', 0.22, i * 0.1);
+        });
+      },
+
+      // 全部通关
+      playWin() {
+        const notes = [523.25, 659.25, 783.99, 1046.5, 783.99, 1046.5, 1318.5];
+        notes.forEach((f, i) => this.tone(f, 0.22, 'triangle', 0.24, i * 0.14));
+      },
+
+      // 背景音乐：经典赛博“警笛”循环，关卡越高越急促
+      startMusic() {
+        if (!this.ctx || this.music || this.muted) return;
+        const ctx = this.ctx;
+        const out = ctx.createGain();
+        out.gain.value = 0.0001;
+        out.connect(this.master);
+
+        const osc = ctx.createOscillator();
+        osc.type = 'square';
+        osc.frequency.value = 200;
+
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 900;
+        filter.Q.value = 2;
+
+        const lfo = ctx.createOscillator();
+        lfo.type = 'triangle';
+        lfo.frequency.value = 1.4;
+        const lfoGain = ctx.createGain();
+        lfoGain.gain.value = 70;
+        lfo.connect(lfoGain);
+        lfoGain.connect(osc.frequency);
+
+        const trem = ctx.createOscillator();
+        trem.type = 'square';
+        trem.frequency.value = 3.2;
+        const tremGain = ctx.createGain();
+        tremGain.gain.value = 0.07;
+        trem.connect(tremGain);
+        tremGain.connect(out.gain);
+
+        osc.connect(filter);
+        filter.connect(out);
+
+        const now = ctx.currentTime;
+        out.gain.setValueAtTime(0.0001, now);
+        out.gain.linearRampToValueAtTime(0.16, now + 0.6);
+
+        osc.start(now);
+        lfo.start(now);
+        trem.start(now);
+
+        this.music = { osc, lfo, lfoGain, trem, tremGain, out };
+        this.setMusicSpeed(1);
+      },
+
+      setMusicSpeed(level) {
+        if (!this.music) return;
+        const lv = Math.max(1, level);
+        this.music.lfo.frequency.value = 1.4 + (lv - 1) * 0.28;
+        this.music.trem.frequency.value = 3.2 + (lv - 1) * 0.5;
+      },
+
+      stopMusic() {
+        if (!this.music || !this.ctx) return;
+        const m = this.music;
+        this.music = null;
+        const now = this.ctx.currentTime;
+        try {
+          m.out.gain.cancelScheduledValues(now);
+          m.out.gain.setValueAtTime(m.out.gain.value, now);
+          m.out.gain.linearRampToValueAtTime(0.0001, now + 0.25);
+          m.tremGain.gain.cancelScheduledValues(now);
+          m.tremGain.gain.setValueAtTime(m.tremGain.gain.value, now);
+          m.tremGain.gain.linearRampToValueAtTime(0.0001, now + 0.25);
+        } catch (e) { /* noop */ }
+        setTimeout(() => {
+          try { m.osc.stop(); m.lfo.stop(); m.trem.stop(); } catch (e) { /* noop */ }
+        }, 330);
+      },
+
+      toggleMute() {
+        this.muted = !this.muted;
+        if (this.master) {
+          this.master.gain.value = this.muted ? 0 : 0.45;
+        }
+        if (this.muted) this.stopMusic();
+        return this.muted;
+      }
+    };
+
+    /* =========================================================================
+     *  2. 游戏数据
+     * ========================================================================= */
+    const canvas = document.getElementById('gameCanvas');
+
+    // 绘制坐标一律按 LOGICAL_SIZE 这个逻辑尺度写（CELL_SIZE 由它算出来），
+    // 画布真实分辨率再按 RENDER_SCALE 放大一层。
+    // 这样 CSS 想显示多大就显示多大，图形都是「往小缩」而不是「往大拉」，
+    // 放大了也不会发虚。所有硬编码的像素（墙厚 2px、豆子半径 3px）也跟着等比放大。
+    const LOGICAL_SIZE = 460;
+    const RENDER_SCALE = 2;
+    canvas.width = LOGICAL_SIZE * RENDER_SCALE;
+    canvas.height = LOGICAL_SIZE * RENDER_SCALE;
+
+    const ctx = canvas.getContext('2d');
+
+    /* ---------------- 静态图层缓存 ----------------
+     * 迷宫里的墙和豆子是不动的，但原来每帧都要整份重画：
+     * 每个墙块 fillRect + strokeRect 各带一次 shadowBlur=10，每颗豆子一次
+     * shadowBlur=8 的 arc。15x15 的地图算下来每帧两百多次高斯模糊，
+     * 一秒上万次 —— 实测这就是整个页面卡顿的根源（板子放大到 527px 之后，
+     * 每次模糊的面积还翻了四倍）。
+     *
+     * 所以拆成三层离屏画布，只在内容真的变了才重画：
+     *   wallLayer    墙 + 底色  —— 换关、重置才重建
+     *   pelletLayer  豆子       —— 吃掉一颗才重建（每秒最多几次）
+     *   neonLayer    霓虹招牌   —— 每 90ms 重建（闪烁本来就每 70ms 才跳一次）
+     * 每帧只做三次 drawImage，再单独画会动的吃豆人和幽灵。
+     *
+     * 离屏画布按 RENDER_SCALE 放大到和设备像素 1:1，并且各自 setTransform 成
+     * 同样的缩放 —— 这样下面所有绘制代码的坐标一个字都不用改，画质也和原来一致。 */
+    function makeLayer() {
+      const c = document.createElement('canvas');
+      c.width = LOGICAL_SIZE * RENDER_SCALE;
+      c.height = LOGICAL_SIZE * RENDER_SCALE;
+      const g = c.getContext('2d');
+      g.setTransform(RENDER_SCALE, 0, 0, RENDER_SCALE, 0, 0);
+      return { canvas: c, ctx: g };
+    }
+    const wallLayer = makeLayer();
+    const pelletLayer = makeLayer();
+    const neonLayer = makeLayer();
+
+    // 霓虹层的重建节流。闪烁的高频层本来就每 70ms 才换一次随机数，
+    // 90ms 重建一次跟每帧重建在观感上没有区别。
+    const NEON_REPAINT_MS = 90;
+    let neonPaintedAt = -1e9;
+
+    /* 渲染循环的开关。
+     * 原来 gameLoop 末尾是无条件 requestAnimationFrame，也就是说循环一旦起来就
+     * 永不停止 —— 暂停了在跑、被 hub 藏进 display:none 的 iframe 里还在跑。
+     * 玩家看不见画面，CPU 却一直被吃满，整个页面（包括 hub 那边的滚动和切 tab）
+     * 都被拖卡。所以循环要能停：暂停时停、页面不可见时停。
+     *
+     * 放在这里而不是主循环那一节：外层注册消息监听时就会用到 stopLoop，
+     * 声明太靠后的话（let 的暂时性死区）有踩空的风险。 */
+    let rafId = null;
+    function startLoop() {
+      if (rafId == null) rafId = requestAnimationFrame(gameLoop);
+    }
+    function stopLoop() {
+      if (rafId != null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+    }
+
+    // 15x15 迷你迷宫地图 (1 = 墙, 0 = 豆子, 2 = 空格/已吃)
+    const GRID_SIZE = 15;
+    const CELL_SIZE = LOGICAL_SIZE / GRID_SIZE;
+    const MAX_LEVEL = 5;
+
+    const MAP_TEMPLATE = [
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+      [1,0,0,0,0,0,0,1,0,0,0,0,0,0,1],
+      [1,0,1,1,0,1,0,1,0,1,0,1,1,0,1],
+      [1,0,1,0,0,1,0,0,0,1,0,0,1,0,1],
+      [1,0,0,0,1,1,0,1,0,1,1,0,0,0,1],
+      [1,1,0,1,1,0,0,0,0,0,1,1,0,1,1],
+      [1,0,0,0,0,0,1,1,1,0,0,0,0,0,1],
+      [1,0,1,1,0,1,1,1,1,1,0,1,1,0,1],
+      [1,0,0,0,0,0,1,1,1,0,0,0,0,0,1],
+      [1,1,0,1,1,0,0,0,0,0,1,1,0,1,1],
+      [1,0,0,0,1,1,0,1,0,1,1,0,0,0,1],
+      [1,0,1,0,0,1,0,0,0,1,0,0,1,0,1],
+      [1,0,1,1,0,1,0,1,0,1,0,1,1,0,1],
+      [1,0,0,0,0,0,0,1,0,0,0,0,0,0,1],
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ];
+
+    /* 迷宫中央的招牌：把频道名刻在墙块上。
+     *
+     * 第 7、8 行（从上往下数）正好是地图正中，而那两行的中央墙格刚好 3 + 5 = 8 格，
+     * 所以八个字一个格子一个字，不多不少，也不需要动地图。
+     * 每行占的列位置是它在地图里本来就有的连续墙格，写进 cols 里是为了画之前
+     * 还能再校验一次 —— 万一以后地图改了，字不会跑到豆子或通路上。
+     *
+     * 这里写简体，显示成繁體交给 zh.js —— 跟页面上其它文案同一个源，
+     * 切换时招牌才会跟着一起变。好处是这份文字只有一处，不会两边对不上。 */
+    const MAZE_TEXT = [
+      { row: 6, cols: [6, 7, 8],        text: '静电的' },      // 第 7 行，3 格
+      { row: 7, cols: [5, 6, 7, 8, 9],  text: 'AI研习社' },    // 第 8 行，5 格
+    ];
+
+    /** 招牌文字转成当前字形。
+     *  必须一格一个字，所以整行转换后如果长度变了（正常不会，中文字符表
+     *  是逐字对应的），就退回逐字转 —— 宁可少一点词级消歧，也不能让字错位。 */
+    function mazeText(s) {
+      if (!window.ZH) return s;
+      const t = ZH.convert(s);
+      return t.length === s.length ? t : Array.from(s, (c) => ZH.convert(c)).join('');
+    }
+
+    // 幽灵候选池：关卡越高，登场越多
+    const GHOST_POOL = [
+      { x: 13, y: 13, color: '#f43f5e', name: 'Blinky' },
+      { x: 1,  y: 13, color: '#ec4899', name: 'Pinky' },
+      { x: 13, y: 1,  color: '#a855f7', name: 'Inky' },
+      { x: 7,  y: 1,  color: '#38bdf8', name: 'Clyde' }
+    ];
+
+    const MODE_NAMES = {
+      manual: '🎮 纯手工操控',
+      jev: '⚡ Jev 决策模型',
+      llm: '🐌 传统 LLM'
+    };
+
+    // 日志里用的短标签，终端里对齐才好看
+    const MODE_TAGS = { manual: 'HUMAN', jev: 'JEV', llm: 'LLM' };
+
+    let grid = [];
+    let pacman = { x: 1, y: 1, dir: 'DOWN', mouthAngle: 0.2, mouthSpeed: 0.05, moving: false };
+    let ghosts = [];
+    let ghostPool = [];
+
+    let currentMode = 'jev';            // 'manual' | 'jev' | 'llm'
+    // 手工模式的「当前方向」。初始 STOP = 开局不吃豆人不自己走，等玩家按键
+    // 一旦按下方向键就锁定，吃豆人会一直朝那个方向走，直到撞墙或换方向
+    let manualDir = { dx: 0, dy: 0, name: 'STOP' };
+    let ghostsAwake = false;            // 吃豆人还没动之前，幽灵保持待机
+    // AI 的短期记忆：喂给模型，用来打断「两个格子来回横跳」
+    let recentCells = [];               // 最近走过的格子，编码为 "x,y"
+    let gameState = 'ready';            // 'ready' | 'playing' | 'clear' | 'won' | 'lost'
+    let isPaused = false;
+    // 开局号角播放期间用于作废过期的「号角结束后起背景音乐」回调
+    let fanfareToken = 0;
+    let lastDecisionTime = 0;
+    let stepCount = 0;
+    let level = 1;
+    let score = 0;                      // 本关得分
+    let totalScore = 0;                 // 累计得分
+    let totalPellets = 0;
+    let remainingPellets = 0;
+
+    /* =========================================================================
+     *  3. 状态初始化
+     * ========================================================================= */
+    function initMap() {
+      grid = JSON.parse(JSON.stringify(MAP_TEMPLATE));
+      totalPellets = 0;
+      for (let r = 0; r < GRID_SIZE; r++) {
+        for (let c = 0; c < GRID_SIZE; c++) {
+          if (grid[r][c] === 0) totalPellets++;
+        }
+      }
+      remainingPellets = totalPellets;
+      score = 0;
+      stepCount = 0;
+      // 地图重建了，静态图层跟着重建一次（之后整关都不用再碰）
+      rebuildWallLayer();
+      rebuildPelletLayer();
+    }
+
+    function activeGhostCount() {
+      return Math.min(2 + Math.floor((level - 1) / 2), GHOST_POOL.length);
+    }
+
+    function placeEntities() {
+      pacman.x = 1;
+      pacman.y = 1;
+      pacman.dir = 'DOWN';
+      pacman.mouthAngle = 0.2;
+      pacman.mouthSpeed = 0.05;
+      pacman.moving = false;
+      manualDir = { dx: 0, dy: 0, name: 'STOP' };
+      manualHasMoved = false;
+      ghostsAwake = false;
+      ghostClock = 0;
+      // 回合相位归零，让每关都是「吃豆人先走 2 回合、幽灵再走 1 格」，行为可复现
+      stepCount = 0;
+      recentCells = [];
+
+      ghostPool = GHOST_POOL.slice(0, activeGhostCount()).map(g => ({ ...g }));
+      ghosts = ghostPool.map(g => ({ ...g }));
+
+      // 渲染插值坐标要和逻辑坐标对齐，否则重生时会从上一关的位置滑过来
+      syncRenderPositions();
+    }
+
+    function syncRenderPositions() {
+      pacman.rx = pacman.x;
+      pacman.ry = pacman.y;
+      ghosts.forEach(g => { g.rx = g.x; g.ry = g.y; });
+    }
+
+    // 出生点的豆子要立刻吃掉，否则永远差一颗，通关判定永远不会触发
+    function eatPelletAtStart() {
+      if (grid[pacman.y][pacman.x] === 0) {
+        grid[pacman.y][pacman.x] = 2;
+        score += 10;
+        totalScore += 10;
+        remainingPellets--;
+        rebuildPelletLayer();
+      }
+    }
+
+    function updateHUD() {
+      document.getElementById('scoreVal').innerText = totalScore;
+      document.getElementById('levelVal').innerText = `LV ${level} / ${MAX_LEVEL}`;
+      document.getElementById('ghostVal').innerText = activeGhostCount();
+      document.getElementById('pelletVal').innerText = `${remainingPellets} / ${totalPellets}`;
+    }
+
+    function updateModeBadge() {
+      const t = MODE_NAMES[currentMode];
+      const badge = document.getElementById('startModeBadge');
+      const sub = document.getElementById('startSubText');
+      badge.innerText = `当前模式：${t}`;
+
+      if (currentMode === 'manual') {
+        sub.innerHTML = '点击下方按钮开始游戏<br>按 <b style="color:#60a5fa">WASD / 方向键</b> 指定方向，吃豆人会一直朝那个方向走<br>撞墙会停下，再按方向键即可转向';
+        return;
+      }
+
+      const cfg = AIConfig.effective(currentMode);
+      const ready = AIConfig.ready(currentMode);
+      const color = currentMode === 'jev' ? '#00ffcc' : '#f43f5e';
+
+      sub.innerHTML = ready
+        ? `点击下方按钮开始游戏，AI 将逐步接管吃豆人<br>` +
+          `<span style="color:${color};font-family:ui-monospace,monospace;">${escapeHtml(cfg.model || '—')}</span>` +
+          ` · 每一步都会真实调用接口，延迟直接体现为游戏卡顿`
+        : `<span style="color:#f43f5e;">这个模式还没配置好，无法开始游戏</span><br>` +
+          `点下方「<b style="color:#00ffcc;">⚙ 配置</b>」填上 base url 和 API key，` +
+          `或者先切到 <b style="color:#60a5fa;">纯手工操控</b>`;
+    }
+
+    function hideAllOverlays() {
+      ['startOverlay', 'levelOverlay', 'winOverlay', 'loseOverlay'].forEach(id => {
+        document.getElementById(id).classList.add('hidden');
+      });
+    }
+
+    /* =========================================================================
+     *  3.5 决策日志终端
+     *
+     *  把模型的每一次问答、每一次落步、幽灵的每一次移动都吐成一行，实时往下滚。
+     *  只保留最近 LOG_MAX 行，超出就丢最旧的 —— 长时间跑也不会把内存吃光。
+     * ========================================================================= */
+    const LOG_MAX = 400;
+
+    const Log = {
+      el: null,
+      jumpEl: null,
+      countEl: null,
+      total: 0,
+      autoScroll: true,
+      ready: false,
+
+      init() {
+        this.el = document.getElementById('logStream');
+        this.jumpEl = document.getElementById('logJump');
+        this.countEl = document.getElementById('logCount');
+        this.ready = true;
+
+        // 贴着底 = 跟着滚；用户自己往上翻 = 停下来别打扰他，并给个「有新日志」按钮。
+        // 注意这里必须用瞬时滚动（不能上 scroll-behavior: smooth）：
+        // 平滑滚动时 scrollTop 是滞后值，会把这个判断彻底搞错。
+        this.el.addEventListener('scroll', () => {
+          const gap = this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight;
+          const atBottom = gap < 24;
+          this.autoScroll = atBottom;
+          this.jumpEl.classList.toggle('hidden', atBottom);
+        });
+
+        this.line('sys', 'DECISION STREAM 已上线 · 等待指令…');
+      },
+
+      lastTag: null,
+      lastHtml: null,
+      lastEl: null,
+      repeat: 0,
+
+      // 连续完全相同的行折叠成「（×N）」，不然某个失败路径每帧刷屏就没法看了
+      line(tag, html) {
+        if (!this.ready) return;
+        // 日志栏很窄，时间戳只留 mm:ss（小时段信息对短局没意义，
+        // 每行省下的 3 个字符宽度全给正文）。精确延迟看 RES 那行的毫秒数。
+        const now = new Date();
+        const mm = String(now.getMinutes()).padStart(2, '0');
+        const ss = String(now.getSeconds()).padStart(2, '0');
+        const stamp = `${mm}:${ss}`;
+
+        // 和上一条一模一样 → 不新增行，把计数加一
+        if (this.lastEl && this.lastTag === tag && this.lastHtml === html) {
+          this.repeat++;
+          this.lastEl.querySelector('.log-time').innerText = stamp;
+          this.lastEl.querySelector('.log-body').innerHTML =
+            html + ` <span class="c-dim">（×${this.repeat}）</span>`;
+          this.bumpCount();
+          if (this.autoScroll) this.el.scrollTop = this.el.scrollHeight;
+          else this.jumpEl.classList.remove('hidden');
+          return;
+        }
+
+        const el = document.createElement('div');
+        el.className = 'log-line';
+        el.innerHTML =
+          `<span class="log-time">${stamp}</span>` +
+          `<span class="log-tag t-${tag}">${LOG_TAGS[tag] || tag.toUpperCase()}</span>` +
+          `<span class="log-body c-${tag}">${html}</span>`;
+        this.el.appendChild(el);
+
+        this.lastTag = tag;
+        this.lastHtml = html;
+        this.lastEl = el;
+        this.repeat = 1;
+        this.bumpCount();
+
+        while (this.el.childElementCount > LOG_MAX) {
+          const dead = this.el.firstElementChild;
+          if (dead === this.lastEl) this.lastEl = null;
+          this.el.removeChild(dead);
+        }
+        if (this.autoScroll) this.el.scrollTop = this.el.scrollHeight;
+        else this.jumpEl.classList.remove('hidden');
+      },
+
+      bumpCount() {
+        this.total++;
+        if (this.countEl) this.countEl.innerText = this.total + ' 行';
+      },
+
+      clear() {
+        this.el.innerHTML = '';
+        this.total = 0;
+        this.lastTag = null;
+        this.lastHtml = null;
+        this.lastEl = null;
+        this.repeat = 0;
+        this.countEl.innerText = '0 行';
+        this.autoScroll = true;
+        this.jumpEl.classList.add('hidden');
+        this.line('sys', '日志已清空');
+      },
+
+      jumpToEnd() {
+        this.autoScroll = true;
+        this.jumpEl.classList.add('hidden');
+        // 用瞬时跳转，不要平滑滚动：平滑过程中会不断触发 scroll 事件，
+        // 让「已到底部」的判断反复翻转，按钮会闪烁而且最终可能停在半路
+        this.el.scrollTop = this.el.scrollHeight;
+      },
+    };
+
+    const LOG_TAGS = {
+      req: 'REQ', res: 'RES', mov: 'MOV', blk: 'BLK',
+      gho: 'GHO', eat: 'EAT', lvl: 'LVL', sys: 'SYS', err: 'ERR',
+    };
+
+    function logEsc(s) {
+      return String(s).replace(/[&<>"']/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    // 位置统一写成 (x,y)，日志里对齐好看
+    function logPos(x, y) {
+      return `(${x},${y})`;
+    }
+
+    /* =========================================================================
+     *  4. 流程控制
+     * ========================================================================= */
+    // 回到初始待机界面
+    function resetGameToStart() {
+      SoundFX.stopMusic();
+      AI.reset();
+      level = 1;
+      totalScore = 0;
+      initMap();
+      placeEntities();
+      gameState = 'ready';
+      isPaused = false;
+
+      hideAllOverlays();
+      document.getElementById('startOverlay').classList.remove('hidden');
+      document.getElementById('pauseBadge').classList.add('hidden');
+      document.getElementById('pauseBtn').innerText = '⏸ 暂停';
+      document.getElementById('actionVal').innerText = 'READY';
+      document.getElementById('actionVal').style.color = '#facc15';
+      updateModeBadge();
+      updateHUD();
+      draw();
+    }
+
+    // 当前模式能不能真的开跑：手工模式永远可以；AI 模式必须先配好 base url / key
+    function modeReadyToPlay() {
+      return currentMode === 'manual' || AIConfig.ready(currentMode);
+    }
+
+    // 未配置时把「开始/下一关/再来一局/重新挑战」全部禁用。
+    // 禁用比「点了没反应」好懂：按钮直接是灰的，配上遮罩里的说明就知道卡在哪。
+    function syncStartButtons() {
+      const ready = modeReadyToPlay();
+      ['startBtn', 'nextBtn', 'winBtn', 'retryBtn'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.disabled = !ready;
+        el.classList.toggle('is-disabled', !ready);
+      });
+    }
+
+    // 开始一整局（从第 1 关开始）
+    function startGame() {
+      if (!modeReadyToPlay()) {
+        refreshNotConfiguredBanner(true);
+        return;
+      }
+      SoundFX.init();
+      SoundFX.resume();
+      level = 1;
+      totalScore = 0;
+      startLevel();
+    }
+
+    // 进入下一关
+    function nextLevel() {
+      if (!modeReadyToPlay()) {
+        refreshNotConfiguredBanner(true);
+        return;
+      }
+      level = Math.min(level + 1, MAX_LEVEL);
+      startLevel();
+    }
+
+    // 开始 / 重开当前关卡（三种模式通用）
+    function startLevel() {
+      initMap();
+      placeEntities();
+      eatPelletAtStart();
+
+      AI.reset();                    // 清掉上一关残留的决策、统计、在飞请求
+      gameState = 'playing';
+      isPaused = false;
+      lastDecisionTime = performance.now();
+
+      hideAllOverlays();
+      document.getElementById('pauseBadge').classList.add('hidden');
+      document.getElementById('pauseBtn').innerText = '⏸ 暂停';
+
+      updateHUD();
+      draw();
+
+      // AI 模式：立刻问第一步（此时棋盘已经是开局状态）。
+      // 没配置的话这里提示一次，之后主循环不会再刷屏。
+      refreshNotConfiguredBanner(true);
+      aiKick();
+
+      Log.line('lvl',
+        `—— 第 ${level} 关开始 · ${MODE_TAGS[currentMode] || currentMode}` +
+        ` · ${totalPellets} 豆 · ${ghosts.length} 幽灵 · ${pacingSummary()} ——`);
+
+      // 先让号角单独唱完，再起背景警笛 —— 两条旋律同时响会互相打架。
+      // 号角要 2 秒多，期间用户可能暂停/重开/静音，所以用一个令牌作废过期的回调。
+      const myToken = ++fanfareToken;
+      const fanfareMs = SoundFX.playStart() * 1000;
+      setTimeout(() => {
+        if (myToken !== fanfareToken) return;      // 期间又开了一局，这次作废
+        if (gameState !== 'playing' || isPaused) return;
+        SoundFX.startMusic();
+        SoundFX.setMusicSpeed(level);
+      }, fanfareMs);
+    }
+
+    /* 切换引擎的闸门。
+     *
+     * 对局进行中直接换引擎等于把这一局丢掉 —— 统计清零、在飞请求作废、棋盘停在
+     * 半路，但玩家并没有按「重来」。所以先停下来问一句，别让一次误点毁掉一局。
+     * 待机 / 结算态没什么可丢的，直接切，不打扰。 */
+    function switchMode(mode) {
+      if (mode === currentMode) return;                          // 点自己，无事发生
+      // 进行中（含「刚过关、还没进下一关」）才需要确认。
+      // 待机 / 通关结算 / 失败结算都没什么可丢的，直接切，不打扰。
+      if (gameState !== 'playing' && gameState !== 'clear') { applyModeSwitch(mode); return; }
+      openModeSwitchConfirm(mode);
+    }
+
+    let pendingMode = null;         // 等待确认的目标引擎
+    let resumeAfterConfirm = false; // 弹窗关掉后要不要自动继续对局
+
+    function openModeSwitchConfirm(mode) {
+      pendingMode = mode;
+      // 弹窗期间把对局停住：不暂停的话 AI 会在背后继续跑，玩家读弹窗的时间
+      // 就变成白送幽灵的步数，甚至可能在弹窗开着的时候输掉。
+      resumeAfterConfirm = !isPaused;
+      if (!isPaused) togglePause();
+
+      const from = MODE_NAMES[currentMode] || currentMode;
+      const to = MODE_NAMES[mode] || mode;
+      const progress = gameState === 'clear'
+        ? `第 <b>${level}</b> 关已通关、还没进下一关，累计 <b>${totalScore}</b> 分。`
+        : `正在用 <b>${escapeHtml(from)}</b> 跑第 <b>${level}</b> 关，` +
+          `已得 <b>${totalScore}</b> 分 · 剩 <b>${remainingPellets}</b> 豆。`;
+      document.getElementById('confirmText').innerHTML =
+        progress + `<br>切到 <b>${escapeHtml(to)}</b> 会` +
+        `<span class="warn">丢掉这一局的进度</span>，回到开始界面重新开局。<br>` +
+        `<span style="color:#6b7280;">（对局期间换引擎还会把两边的延迟/决策统计混在一起，` +
+        `对比就没意义了）</span>`;
+      document.getElementById('confirmMask').classList.remove('hidden');
+    }
+
+    // 继续当前对局：把对局恢复到弹窗前的状态（原本就暂停的话保持暂停）
+    function cancelModeSwitch() {
+      pendingMode = null;
+      document.getElementById('confirmMask').classList.add('hidden');
+      if (resumeAfterConfirm && isPaused) togglePause();
+      resumeAfterConfirm = false;
+    }
+
+    // 终止并切换：切完回到待机态，让玩家自己决定什么时候用新引擎开局
+    function confirmModeSwitch() {
+      const mode = pendingMode;
+      pendingMode = null;
+      resumeAfterConfirm = false;
+      document.getElementById('confirmMask').classList.add('hidden');
+      if (!mode) return;
+      // 对局已经作废，别让它停在半路：直接回开始界面，等玩家按开始
+      isPaused = false;
+      applyModeSwitch(mode);
+      resetGameToStart();
+      Log.line('sys', `对局已终止 · 引擎切到 ${MODE_TAGS[mode] || mode}，可重新开局`);
+    }
+
+    // 真正落地切换。不碰 gameState / 棋盘，调用方负责决定对局怎么办。
+    function applyModeSwitch(mode) {
+      currentMode = mode;
+      document.getElementById('btnManual').className = mode === 'manual' ? 'mode-btn active-manual' : 'mode-btn';
+      document.getElementById('btnJev').className = mode === 'jev' ? 'mode-btn active-jev' : 'mode-btn';
+      document.getElementById('btnLlm').className = mode === 'llm' ? 'mode-btn active-llm' : 'mode-btn';
+
+      // 切到手工模式时，吃豆人立刻停下，等待键盘指令
+      if (mode === 'manual') {
+        manualDir = { dx: 0, dy: 0, name: 'STOP' };
+        pacman.moving = false;
+      }
+
+      // 换模式等于换引擎，之前的决策/统计/在飞请求全部作废
+      AI.reset();
+
+      const latEl = document.getElementById('latencyVal');
+      if (mode === 'manual') {
+        latEl.innerText = '人类反应';
+        latEl.style.color = '#60a5fa';
+        document.getElementById('avgVal').innerText = '— / 0';
+      } else {
+        latEl.innerText = '—';
+        latEl.style.color = mode === 'jev' ? '#00ffcc' : '#f43f5e';
+      }
+
+      updateModeBadge();
+      refreshModeReadiness();
+      Log.line('sys', `切换引擎 → <span class="c-hi">${MODE_TAGS[mode] || mode}</span> · 统计与在飞请求已重置`);
+      // 切到未配置的引擎时先给个横幅，但先不写日志（这会儿还没出错）
+      refreshNotConfiguredBanner(false);
+    }
+
+    function togglePause() {
+      if (gameState !== 'playing') return;
+      isPaused = !isPaused;
+      document.getElementById('pauseBtn').innerText = isPaused ? '▶ 继续' : '⏸ 暂停';
+      document.getElementById('pauseBadge').classList.toggle('hidden', !isPaused);
+      if (isPaused) SoundFX.stopMusic();
+      else { SoundFX.startMusic(); SoundFX.setMusicSpeed(level); }
+      Log.line('sys', isPaused ? '⏸ 已暂停' : '▶ 继续');
+    }
+
+    function toggleMute() {
+      SoundFX.init();
+      SoundFX.resume();
+      const muted = SoundFX.toggleMute();
+      if (!muted && gameState === 'playing' && !isPaused) {
+        SoundFX.startMusic();
+        SoundFX.setMusicSpeed(level);
+      }
+      const btn = document.getElementById('muteBtn');
+      btn.innerText = muted ? '🔇 静音' : '🔊 音效';
+      btn.classList.toggle('muted', muted);
+    }
+
+    /* =========================================================================
+     *  5. 键盘监听
+     * ========================================================================= */
+
+    /* 被门户（hub）切到别的 tab 时，自动暂停 + 停掉渲染循环。
+     *
+     * 为什么必须加：门户是用 iframe 装这个页面的，切走之后 iframe 并不会停 ——
+     * requestAnimationFrame 照跑，AI 决策也照发。玩家看不见画面，token 却在烧，
+     * 而且回来时吃豆人已经死了。
+     * 单独跑这个页面时收不到这类消息，这段就是空转，不影响任何行为。 */
+    let hubPausedIt = false;   // 这次暂停是 hub 让停的，还是玩家自己按的
+    window.addEventListener('message', (e) => {
+      const type = e.data && e.data.type;
+      if (type === 'hub:pause') {
+        // 只在「正在对局且没暂停」时才动手，别覆盖玩家自己按的暂停；
+        // 同时记下来，resume 时只解除我们造成的这一次暂停
+        hubPausedIt = gameState === 'playing' && !isPaused;
+        if (hubPausedIt) togglePause();
+        stopLoop();          // 光暂停不够：循环还在跑就是在白烧 CPU
+      } else if (type === 'hub:resume') {
+        startLoop();
+        if (hubPausedIt) {
+          if (gameState === 'playing' && isPaused) togglePause();
+          hubPausedIt = false;
+        }
+      }
+    });
+
+    // 页面本身被切到后台时也停 —— display:none 的 iframe 不一定收到这个事件，
+    // 所以上面 hub 那套消息是主力，这条是两个场景的兜底。
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) stopLoop();
+      else startLoop();
+    });
+
+    window.addEventListener('keydown', (e) => {
+      const key = e.key.toLowerCase();
+
+      // 确认弹窗开着的时候只认 ESC / ENTER。不拦的话空格会透过弹窗把背后的
+      // 对局「继续」起来 —— 玩家以为在关弹窗，实际上是把暂停解除了。
+      //
+      // 空格绑到「继续对局」而不是「终止」：它是这游戏按得最勤的键（开始/暂停），
+      // 手正忙着的时候弹窗冒出来，那一下空格绝不能落在会毁掉对局的那一侧。
+      if (!document.getElementById('confirmMask').classList.contains('hidden')) {
+        if (key === 'escape' || key === ' ') { e.preventDefault(); cancelModeSwitch(); }
+        else if (key === 'enter') { e.preventDefault(); confirmModeSwitch(); }
+        return;
+      }
+
+      // 配置弹窗开着的时候，键盘一律不响应游戏操作
+      if (!document.getElementById('configMask').classList.contains('hidden')) {
+        if (key === 'escape') { e.preventDefault(); closeConfig(); }
+        return;
+      }
+
+      // 空格 / 回车：开始、暂停、下一关、重开
+      if (key === ' ' || key === 'enter') {
+        e.preventDefault();
+        SoundFX.init();
+        SoundFX.resume();
+        if (gameState === 'ready') startGame();
+        else if (gameState === 'clear') nextLevel();
+        else if (gameState === 'won' || gameState === 'lost') startGame();
+        else if (gameState === 'playing') togglePause();
+        return;
+      }
+
+      // M 键静音
+      if (key === 'm') {
+        toggleMute();
+        return;
+      }
+
+      let newDir = null;
+      if (key === 'arrowup' || key === 'w') newDir = { dx: 0, dy: -1, name: 'UP' };
+      else if (key === 'arrowdown' || key === 's') newDir = { dx: 0, dy: 1, name: 'DOWN' };
+      else if (key === 'arrowleft' || key === 'a') newDir = { dx: -1, dy: 0, name: 'LEFT' };
+      else if (key === 'arrowright' || key === 'd') newDir = { dx: 1, dy: 0, name: 'RIGHT' };
+
+      if (!newDir) return;
+      e.preventDefault();
+      SoundFX.init();
+      SoundFX.resume();
+
+      // 方向键只属于手工模式。之前 AI 模式下按一下方向键就把模式切成手工了 ——
+      // 结果是 AI 正在跑的时候手一抖碰到键盘，比赛就被打断，测出来的东西也没意义了，
+      // 而且中途切模式还会把这一关的统计混在一起。要玩手工就明确去点「纯手工操控」。
+      if (currentMode !== 'manual') {
+        // 文案里不放位置和豆数：那两个值在 AI 模式下一直在变，会让日志的
+        // 相同消息折叠失效，按几下键盘就刷屏。
+        Log.line('sys', `⌨ 收到 ${newDir.name}，但当前是「${MODE_NAMES[currentMode]}」模式，方向键不生效`);
+        return;
+      }
+
+      // 结算 / 过关状态下按键无效，避免误触
+      if (gameState === 'won' || gameState === 'lost' || gameState === 'clear') return;
+
+      // 待机状态下按键 = 开始游戏
+      if (gameState === 'ready') {
+        startGame();
+      }
+
+      manualDir = newDir;
+      document.getElementById('actionVal').innerText = newDir.name;
+      document.getElementById('actionVal').style.color = '#60a5fa';
+      highlightManualBar(newDir.name);
+      Log.line('req', `⌨ 玩家按键 <span class="c-hi">${newDir.name}</span> · 位置 ${logPos(pacman.x, pacman.y)} · 剩余 ${remainingPellets} 豆`);
+    });
+
+    // 窗口失焦时不改方向：切回来吃豆人继续沿原方向走，和经典吃豆人一致
+
+    function highlightManualBar(selectedName) {
+      ['UP', 'DOWN', 'LEFT', 'RIGHT'].forEach(name => {
+        const isSel = name === selectedName;
+        document.getElementById(`p-${name}`).innerText = isSel ? '100%' : '0%';
+        const bar = document.getElementById(`bar-${name}`);
+        bar.style.width = isSel ? '100%' : '0%';
+        bar.style.background = '#3b82f6';
+        bar.style.boxShadow = isSel ? '0 0 8px #3b82f6' : 'none';
+      });
+    }
+
+    /* =========================================================================
+     *  6. 接口配置：base url / key / model
+     *
+     *  存在 localStorage，请求统一走本地 server.py 的 /api/* 转发。
+     *  Jev 的 API 不允许浏览器跨域直连（预检会返回 400 Disallowed CORS origin），
+     *  所以代理这一层是必需的，不是偷懒。
+     * ========================================================================= */
+    const CONFIG_KEY = 'pacman_demo_ai_config_v1';
+
+    // 和 server.py 里的 DEFAULT_* 保持一致。服务端在 body.baseUrl 为空时也会用它兜底，
+    // 所以这里预填出来只是把「实际会打到哪」如实显示给用户，不改变行为。
+    const BUILTIN_DEFAULTS = {
+      jev: { baseUrl: 'https://api.typesafe.ai', model: 'jev-latest' },
+      llm: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+    };
+
+    const AIConfig = {
+      jev: { baseUrl: '', apiKey: '', model: '' },
+      llm: { baseUrl: '', apiKey: '', model: '' },
+      pacing: 'adaptive',           // 'adaptive' = 慢镜头（公平比决策质量） | 'realtime' = 固定 145ms
+      serverDefaults: null,   // /api/config 拿到的 .env 默认值
+
+      load() {
+        try {
+          const saved = JSON.parse(localStorage.getItem(CONFIG_KEY) || 'null');
+          if (saved) {
+            if (saved.jev) this.jev = { ...this.jev, ...saved.jev };
+            if (saved.llm) this.llm = { ...this.llm, ...saved.llm };
+            if (saved.pacing === 'adaptive' || saved.pacing === 'realtime') this.pacing = saved.pacing;
+          }
+        } catch (e) { /* 存坏了就当没存过 */ }
+      },
+
+      save() {
+        try {
+          localStorage.setItem(CONFIG_KEY, JSON.stringify({
+            jev: this.jev, llm: this.llm, pacing: this.pacing,
+          }));
+        } catch (e) { /* 无痕模式下可能写不进去，忽略 */ }
+      },
+
+      // 页面填的优先；没填就回落到 .env 的默认值，再没填就回落到内置默认值。
+      // 内置默认值是必须的：server.py 在 baseUrl 为空时本来就会用它，
+      // 不在这里补上的话，界面会显示「空」而实际请求却打到了默认地址。
+      effective(mode) {
+        const page = this[mode] || {};
+        const dft = (this.serverDefaults && this.serverDefaults[mode]) || {};
+        const fb = BUILTIN_DEFAULTS[mode] || {};
+        return {
+          baseUrl: (page.baseUrl || '').trim() || dft.baseUrl || fb.baseUrl || '',
+          apiKey: (page.apiKey || '').trim(),
+          model: (page.model || '').trim() || dft.model || fb.model || '',
+          serverHasKey: !!dft.hasKey,
+          serverKeyHint: dft.keyHint || '',
+        };
+      },
+
+      // 这个字段的值是哪来的：用户自己填的 / 服务端 .env / 内置默认
+      source(mode, field) {
+        if (((this[mode] || {})[field] || '').trim()) return 'user';
+        const dft = (this.serverDefaults && this.serverDefaults[mode]) || {};
+        const v = (dft[field] || '').trim();
+        const fb = (BUILTIN_DEFAULTS[mode] || {})[field] || '';
+        return v && v !== fb ? 'env' : 'default';
+      },
+
+      ready(mode) {
+        const c = this.effective(mode);
+        return !!c.baseUrl && (!!c.apiKey || c.serverHasKey);
+      },
+    };
+
+    /* =========================================================================
+     *  7. 决策引擎如何「告诉」模型 —— state / questions 的构造
+     *
+     *  这是整个 demo 的核心。Jev 没有 system prompt、没有对话历史，每次调用都
+     *  是独立的，所以每一步都要把「完整局面 + 规则」重新发过去；并且要把
+     *  「每个动作的后果」直接写进 criteria 的描述里，模型不需要自己从坐标反推。
+     * ========================================================================= */
+    const MOVE_DIRS = [
+      { name: 'UP', dx: 0, dy: -1 },
+      { name: 'DOWN', dx: 0, dy: 1 },
+      { name: 'LEFT', dx: -1, dy: 0 },
+      { name: 'RIGHT', dx: 1, dy: 0 },
+    ];
+
+    // 把棋盘画成字符画：给模型看字符画，比给一堆坐标好懂得多
+    function mazeAscii() {
+      const rows = [];
+      for (let r = 0; r < GRID_SIZE; r++) {
+        let line = '';
+        for (let c = 0; c < GRID_SIZE; c++) {
+          if (r === pacman.y && c === pacman.x) line += 'P';
+          else if (ghosts.some(g => g.x === c && g.y === r)) line += 'G';
+          else if (grid[r][c] === 1) line += '#';
+          else if (grid[r][c] === 0) line += '.';
+          else line += '_';
+        }
+        rows.push(line);
+      }
+      return rows;
+    }
+
+    function manhattan(a, b) {
+      return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+    }
+
+    // 从 (sx,sy) 出发到最近一颗豆子的真实步数（BFS，绕墙算）。
+    // Manhattan 在这里会骗人 —— 隔一堵墙的两个点距离可能很近但根本走不过去。
+    function bfsDistanceToNearestPellet(sx, sy) {
+      if (!grid[sy] || grid[sy][sx] === 1) return null;
+      if (grid[sy][sx] === 0) return 0;
+      const seen = Array.from({ length: GRID_SIZE }, () => new Array(GRID_SIZE).fill(false));
+      const queue = [[sx, sy, 0]];
+      seen[sy][sx] = true;
+      for (let head = 0; head < queue.length; head++) {
+        const [x, y, dist] = queue[head];
+        if (grid[y][x] === 0) return dist;
+        for (const m of MOVE_DIRS) {
+          const nx = x + m.dx, ny = y + m.dy;
+          if (!grid[ny] || grid[ny][nx] === 1 || seen[ny][nx]) continue;
+          seen[ny][nx] = true;
+          queue.push([nx, ny, dist + 1]);
+        }
+      }
+      return null;   // 场上已经没有豆子了
+    }
+
+    function buildAIState() {
+      const moveOptions = {};
+      MOVE_DIRS.forEach(d => {
+        const nx = pacman.x + d.dx;
+        const ny = pacman.y + d.dy;
+        const legal = !!grid[ny] && grid[ny][nx] !== 1;
+        if (!legal) {
+          moveOptions[d.name] = {
+            legal: false,
+            result: `Pac-Man cannot move here (wall). He stays at (x=${pacman.x}, y=${pacman.y}) and the turn is wasted.`,
+          };
+        } else {
+          const pelletDist = bfsDistanceToNearestPellet(nx, ny);
+          moveOptions[d.name] = {
+            legal: true,
+            result: `Pac-Man steps onto (x=${nx}, y=${ny}), which contains ${grid[ny][nx] === 0 ? 'a pellet worth 10 points' : 'nothing (this pellet is already eaten)'}.`,
+            ghost_distance_after_move: Math.min(...ghosts.map(g => manhattan({ x: nx, y: ny }, g))),
+            // 越小越好：这才是「往豆子多的方向走」的真实依据
+            steps_to_nearest_pellet_after_move: pelletDist,
+            already_visited_recently: recentCells.includes(nx + ',' + ny),
+          };
+        }
+      });
+
+      return {
+        game: 'Pac-Man, single player, 15x15 grid',
+        coordinates: 'x is the column (0 = leftmost, increases rightwards, max 14). y is the row (0 = topmost, increases downwards, max 14).',
+        direction_meaning: {
+          UP: 'y decreases by 1',
+          DOWN: 'y increases by 1',
+          LEFT: 'x decreases by 1',
+          RIGHT: 'x increases by 1',
+        },
+        maze_legend: {
+          '#': 'wall, cannot be entered',
+          '.': 'pellet, worth 10 points',
+          '_': 'empty floor, pellet already eaten',
+          P: "Pac-Man's current cell",
+          G: 'ghost, lethal',
+        },
+        maze: mazeAscii(),
+        pacman: { x: pacman.x, y: pacman.y, facing: pacman.dir },
+        ghosts: ghosts.map(g => ({ x: g.x, y: g.y, distance_to_pacman: manhattan(g, pacman) })),
+        pellets_remaining: remainingPellets,
+        // 最近走过的格子，用来避免在同一小片空地里来回打转
+        recent_path: recentCells.slice(),
+        legal_moves: MOVE_DIRS.filter(d => moveOptions[d.name].legal).map(d => d.name),
+        move_options: moveOptions,
+        rules: [
+          'Each turn you choose exactly one direction for Pac-Man: UP, DOWN, LEFT or RIGHT.',
+          'A move is legal only if the destination cell is not a wall (#). An illegal move wastes the turn and Pac-Man stays still.',
+          'Pac-Man dies the instant he shares a cell with a ghost (G). Death ends the game immediately.',
+          'Eating a pellet (.) scores 10 points and clears that cell.',
+          'The level is cleared when pellets_remaining reaches 0.',
+          'After every move of yours, each ghost steps one cell closer to Pac-Man.',
+        ],
+        objective: 'Clear the level by eating pellets while never walking into a ghost. Balance pellet progress against ghost safety.',
+      };
+    }
+
+    // 关键技巧：把每个动作的后果写进 criteria，让模型直接比较「选项说明书」，
+    // 而不是自己去脑补坐标运算。实测这样选择质量高很多。
+    function buildJevQuestions(state) {
+      const criteria = {};
+      MOVE_DIRS.forEach(d => {
+        const o = state.move_options[d.name];
+        if (!o.legal) { criteria[d.name] = o.result; return; }
+        const pellet = o.steps_to_nearest_pellet_after_move == null
+          ? 'no pellets are left anywhere on the board'
+          : `${o.steps_to_nearest_pellet_after_move} step(s) away from the nearest pellet`;
+        const ghost = `${o.ghost_distance_after_move} cell(s) from the nearest ghost`;
+        const seen = o.already_visited_recently ? ' Pac-Man was already on this cell a moment ago.' : '';
+        criteria[d.name] = `${o.result} After this move Pac-Man would be ${pellet}, and ${ghost}.${seen}`;
+      });
+      return {
+        move: {
+          type: 'choice',
+          instructions:
+            'You are playing a turn-based game. You are called exactly once per turn, always with the ' +
+            'current board, and each of your answers moves Pac-Man exactly one cell. You must pick the ' +
+            'single best direction for the very next move. Your goal for the whole game is to eat every ' +
+            'pellet on the board without ever sharing a cell with a ghost. ' +
+            'Never pick a direction whose move_options entry has legal = false. ' +
+            'Pacing back and forth over cells you have already cleared is the worst possible outcome: ' +
+            'it burns turns while the ghosts keep closing in. ' +
+            'Prefer the legal move that puts Pac-Man fewer steps away from the nearest pellet (smaller ' +
+            'steps_to_nearest_pellet_after_move), as long as the nearest ghost would still be at least ' +
+            '3 cells away. Only move toward a ghost if that is the only route to reachable pellets and ' +
+            'the ghost is 4 or more cells away. ' +
+            'Avoid a move whose destination has already_visited_recently = true unless every alternative ' +
+            'would send Pac-Man closer to a ghost.',
+          criteria,
+        },
+      };
+    }
+
+    // 传统 LLM 走 OpenAI 兼容的 chat/completions，要求它只回一个 JSON
+    function buildLlmMessages(state, questions) {
+      const optionLines = MOVE_DIRS.map(d => {
+        const o = state.move_options[d.name];
+        if (!o.legal) return `  ${d.name}: ILLEGAL — ${o.result}`;
+        const pellet = o.steps_to_nearest_pellet_after_move == null
+          ? 'no pellets left'
+          : `${o.steps_to_nearest_pellet_after_move} step(s) from the nearest pellet`;
+        const seen = o.already_visited_recently ? ' (Pac-Man was just here)' : '';
+        return `  ${d.name}: LEGAL — arrives at (${pacman.x + (d.name === 'LEFT' ? -1 : d.name === 'RIGHT' ? 1 : 0)}, ` +
+          `${pacman.y + (d.name === 'UP' ? -1 : d.name === 'DOWN' ? 1 : 0)}); ${o.result} ` +
+          `Then ${pellet}, and ${o.ghost_distance_after_move} cell(s) from the nearest ghost.${seen}`;
+      }).join('\n');
+
+      const system = [
+        'You are the decision engine of a turn-based Pac-Man game.',
+        'You are called exactly once per turn, always with the complete current board state.',
+        'Each answer of yours moves Pac-Man exactly one cell. You have no memory of earlier turns,',
+        'so the recent_path field in the state is how you know where Pac-Man just was.',
+        'Your goal for the whole game is to eat every pellet on the board without ever sharing a cell with a ghost.',
+        'Reply with one single JSON object and nothing else.',
+        'The JSON object has exactly one key "direction" whose value is one of "UP", "DOWN", "LEFT", "RIGHT".',
+      ].join(' ');
+
+      const user = [
+        'Current board state (JSON):',
+        JSON.stringify(state, null, 2),
+        '',
+        'Your options for this turn:',
+        optionLines,
+        '',
+        questions.move.instructions,
+        '',
+        'Reply with JSON only, for example {"direction": "LEFT"}',
+      ].join('\n');
+
+      return [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ];
+    }
+
+    function parseLlmDirection(content) {
+      const text = String(content || '');
+      try {
+        const obj = JSON.parse(text);
+        const v = obj && (obj.direction || obj.move || obj.action);
+        if (typeof v === 'string' && /^(UP|DOWN|LEFT|RIGHT)$/i.test(v.trim())) {
+          return v.trim().toUpperCase();
+        }
+      } catch (e) { /* 不是纯 JSON，往下走兜底解析 */ }
+      const m = text.toUpperCase().match(/\b(UP|DOWN|LEFT|RIGHT)\b/);
+      return m ? m[1] : null;
+    }
+
+    /* =========================================================================
+     *  8. AI 调用层
+     *
+     *  核心设计：这是「回合制」吃豆人。每走一步都重新问一次模型，模型看的是
+     *  当前这一刻的真实棋盘：
+     *
+     *      问模型 → 等它想 → 落一步 → 判生死 → 再问模型 → …
+     *
+     *  故意不做预取、不做缓存、不做长计划、不做本地兜底。理由是一个方向的答案
+     *  只对「问它的那一刻的棋盘」有效；提前要来的答案属于另一个局面，用它等于
+     *  我们替模型做了决定，那测出来的就不是模型的判断力了。
+     *
+     *  唯一的代价是延迟 = 思考时间。回合制模式下幽灵也按回合数走，所以延迟
+     *  只决定一局要打多久，不影响难度 —— 比的是纯粹的决策质量。
+     * ========================================================================= */
+    const TICK = 145;               // 幽灵实时节奏的时间基准（幽灵 TICK*2 走一格）
+    // 手工模式每格耗时。比 TICK 慢一截：更快的话拐角只有一两帧的窗口，
+    // 手指根本来不及在正确的位置按下拐弯键，操控会非常难受。
+    const MANUAL_STEP_MS = 190;
+    let manualHasMoved = false;     // 手工模式本关是否已经真的走过一步（见 takeTurn 的预输入逻辑）
+    let emaStepMs = TICK;           // 实际「一步」的墙钟耗时（≈模型延迟），用于渲染插值
+    let lastStepAt = 0;
+    let ghostClock = 0;             // 实时模式的幽灵计时器
+    let lastFrameAt = 0;
+
+    const AI = {
+      pending: false,
+      decision: null,        // 模型已返回、还没落地的那一步
+      epoch: 0,
+      controller: null,
+      error: null,
+      // 「连不上本地服务」比「没配置」严重得多，而且要长时间留在界面上，
+      // 单独存一份，免得被 refreshNotConfiguredBanner 的通用文案盖掉（之前就是这样，
+      // 用户只能看到「去配 key」，而真正的问题是页面根本没连上服务）。
+      proxyError: null,
+      stats: { count: 0, totalMs: 0, lastMs: 0, turns: 0, illegal: 0 },
+
+      // 所有真实失败统一走这里，保证 errorTitle 不会残留上一次的文案
+      fail(msg, title) {
+        this.errorTitle = title || 'AI 调用失败';
+        this.error = msg;
+        setStatusDot(currentMode, 'err');
+        renderAIError();
+      },
+
+      reset() {
+        this.epoch++;
+        if (this.controller) {
+          try { this.controller.abort(); } catch (e) { /* noop */ }
+        }
+        this.controller = null;
+        this.pending = false;
+        this.decision = null;
+        this.error = null;
+        this.errorTitle = null;
+        this.stats = { count: 0, totalMs: 0, lastMs: 0, turns: 0, illegal: 0 };
+        ghostClock = 0;
+        emaStepMs = currentMode === 'manual' ? MANUAL_STEP_MS : TICK;
+        lastStepAt = 0;
+        updateAIStats();
+        hideAIError();
+        clearProbabilities();
+      },
+
+      async request() {
+        if (this.pending || this.decision) return;
+        const mode = currentMode;
+        if (mode === 'manual') return;
+
+        if (!AIConfig.ready(mode)) {
+          // 正常不会走到这里（aiKick 已经挡了），留着当兜底
+          refreshNotConfiguredBanner(true);
+          return;
+        }
+
+        const cfg = AIConfig.effective(mode);
+        const state = buildAIState();
+        const questions = buildJevQuestions(state);
+        const payload = { baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, model: cfg.model };
+
+        if (mode === 'jev') {
+          payload.state = state;
+          payload.questions = questions;
+        } else {
+          payload.messages = buildLlmMessages(state, questions);
+        }
+
+        this.pending = true;
+        this.error = null;
+        hideAIError();
+        setStatusDot(mode, 'busy');
+        renderPromptViewer(mode, cfg, state, questions, payload.messages);
+
+        // 日志：这一回合问了什么
+        const turnNo = this.stats.turns + 1;
+        const legalList = state.legal_moves.join('/');
+        const nearGhost = state.ghosts.length
+          ? Math.min(...state.ghosts.map(g => g.distance_to_pacman))
+          : null;
+        Log.line('req',
+          `T${String(turnNo).padStart(3, '0')} ` +
+          `<span class="c-hi">${MODE_TAGS[mode] || mode}</span> ` +
+          `问 @ ${logPos(pacman.x, pacman.y)} · 可走 <span class="c-hi">${legalList}</span>` +
+          (nearGhost != null ? ` · 最近幽灵 <span class="c-hi">${nearGhost}</span> 格` : '') +
+          ` · 剩 ${remainingPellets} 豆 · <span class="c-dim">等待响应…</span>`);
+
+        const epoch = this.epoch;
+        this.controller = new AbortController();
+        const started = performance.now();
+
+        try {
+          const resp = await fetch(mode === 'jev' ? 'api/jev' : 'api/llm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: this.controller.signal,
+          });
+          const result = await resp.json();
+          if (epoch !== this.epoch) return;      // 中途重开过，丢弃这个结果
+          this.handleResult(mode, result, started);
+        } catch (err) {
+          if (epoch !== this.epoch) return;
+          if (err && err.name === 'AbortError') return;   // 自己取消的，不算失败
+          this.pending = false;
+          this.fail(`请求本地服务失败：${err.message}。确认 server.py 还在运行，并且你是通过 http://127.0.0.1:8791 打开的页面。`);
+          Log.line('err', `请求失败 · ${logEsc(err.message)}`);
+        }
+      },
+
+      handleResult(mode, result, started) {
+        this.pending = false;
+        const wallMs = Math.round(performance.now() - started);
+
+        if (!result.ok) {
+          this.fail(`上游返回 ${result.status || '—'}：${formatAIError(result.error)}`);
+          Log.line('err', `上游 ${result.status || '—'} · ${logEsc(formatAIError(result.error))}`);
+          return;
+        }
+
+        const data = result.data || {};
+        const latency = result.latencyMs != null ? Math.round(result.latencyMs) : wallMs;
+        let dirName = null;
+        let probabilities = null;
+        let modelName = data.model || AIConfig.effective(mode).model;
+        let rawOut = null;
+
+        if (mode === 'jev') {
+          const ans = data.answers && data.answers.move;
+          if (!ans) {
+            this.fail('Jev 的响应里没有 move 这个 answer，检查 questions 的 key 是否一致。');
+            Log.line('err', `Jev 响应缺少 <b>move</b> 字段 · 原始返回 <span class="c-dim">${logEsc(JSON.stringify(data).slice(0, 220))}</span>`);
+            return;
+          }
+          dirName = String(ans.choice || '').toUpperCase();
+          probabilities = ans.probabilities || null;
+        } else {
+          const msg = data.choices && data.choices[0] && data.choices[0].message;
+          const content = msg ? msg.content : '';
+          rawOut = String(content || '');
+          dirName = parseLlmDirection(content);
+          if (!dirName) {
+            this.fail(`解析不出方向。模型原话：「${String(content).slice(0, 200)}」`);
+            Log.line('err', `解析不出方向 · 模型原话 <span class="c-dim">${logEsc(rawOut.slice(0, 220))}</span>`);
+            return;
+          }
+        }
+
+        const dir = MOVE_DIRS.find(d => d.name === dirName);
+        if (!dir) {
+          this.fail(`模型返回了非法方向「${dirName}」`);
+          Log.line('err', `返回了非法方向 <b>${logEsc(dirName)}</b>`);
+          return;
+        }
+
+        this.stats.count++;
+        this.stats.totalMs += latency;
+        this.stats.lastMs = latency;
+        this.decision = { name: dir.name, dx: dir.dx, dy: dir.dy };
+
+        // 日志：模型答了什么。Jev 带概率分布，LLM 顺带把它吐的原文贴出来
+        let resLine =
+          `T${String(this.stats.turns + 1).padStart(3, '0')} ` +
+          `← <span class="c-hi">"${dir.name}"</span> · <span class="c-hi">${latency}ms</span>`;
+        if (probabilities) {
+          const top = Object.entries(probabilities)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3)
+            .map(([k, v]) => `${k} ${Math.round((v <= 1 ? v * 100 : v))}%`)
+            .join(' · ');
+          resLine += ` · 概率 ${top}`;
+        }
+        Log.line('res', resLine);
+        if (rawOut != null) {
+          Log.line('sys', `<span class="c-dim">LLM 原文:</span> ${logEsc(rawOut.slice(0, 260))}`);
+        }
+
+        updateAIStats();
+        renderProbabilities(mode, dir.name, probabilities);
+        document.getElementById('modelVal').innerText = modelName || '—';
+        document.getElementById('actionVal').innerText = dir.name;
+        document.getElementById('actionVal').style.color = mode === 'jev' ? '#00ffcc' : '#f43f5e';
+        setStatusDot(mode, 'ok');
+
+        // 答案到了就马上落地，不等主循环下一个 tick —— 否则每一步都白加一个 tick 的延迟
+        maybeTakeTurn();
+      },
+
+      take() {
+        const d = this.decision;
+        this.decision = null;
+        return d;
+      },
+    };
+
+    /* =========================================================================
+     *  9. AI 相关的界面刷新
+     * ========================================================================= */
+    function updateAIStats() {
+      const s = AI.stats;
+      const avg = s.count ? Math.round(s.totalMs / s.count) : null;
+      document.getElementById('latencyVal').innerText = s.lastMs ? `${s.lastMs} ms` : '—';
+      const extra = s.illegal ? ` · 撞墙 ${s.illegal}` : '';
+      document.getElementById('avgVal').innerText =
+        (avg != null ? `${avg} ms` : '—') + ` / ${s.count} 步` + extra;
+      const pacingEl = document.getElementById('pacingVal');
+      if (pacingEl) pacingEl.innerText = pacingSummary();
+    }
+
+    function setStatusDot(mode, state) {
+      const el = document.getElementById(mode === 'jev' ? 'dotJev' : 'dotLlm');
+      if (el) el.className = 'status-dot' + (state ? ' ' + state : '');
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    function formatAIError(err) {
+      if (err == null) return '未知错误';
+      if (typeof err === 'string') return err.slice(0, 400);
+      try {
+        const d = err.detail;
+        if (d && typeof d === 'object' && d.message) return `${d.error_type || ''} ${d.message}`.trim();
+        if (Array.isArray(d)) return d.map(x => x.msg || JSON.stringify(x)).join('; ').slice(0, 400);
+        if (Array.isArray(err.detail)) return err.detail.map(x => x.msg || JSON.stringify(x)).join('; ').slice(0, 400);
+        return JSON.stringify(err).slice(0, 400);
+      } catch (e) {
+        return String(err).slice(0, 400);
+      }
+    }
+
+    function renderAIError() {
+      const el = document.getElementById('errorBanner');
+      if (!AI.error) { el.classList.add('hidden'); return; }
+      el.innerHTML = `<b>⚠ ${escapeHtml(AI.errorTitle || 'AI 调用失败')}</b>${escapeHtml(AI.error)}`;
+      el.classList.remove('hidden');
+    }
+
+    function hideAIError() {
+      document.getElementById('errorBanner').classList.add('hidden');
+    }
+
+    // 「未配置」不是请求失败，所以不该由请求路径去报（那样会被主循环每帧触发）。
+    // 只在切模式 / 开局这两个用户真的需要知道的时机提示，日志里也只记一次。
+    function notConfiguredMsg(mode) {
+      return `「${MODE_NAMES[mode]}」还没配置好。点右下角「⚙ 配置」填上 base url 和 API key` +
+        `（.env 里配过的话 key 可以留空）。没配好之前吃豆人不会动。`;
+    }
+
+    // 页面当前跑在哪个地址、本地服务通不通 —— 这两个信息是排查「测试连接不好使」的关键，
+    // 所以直接把结论说出来，而不是让用户自己去猜「Failed to fetch」是什么意思。
+    function currentOrigin() {
+      return location.protocol === 'file:' ? 'file://（本地文件）' : location.origin;
+    }
+
+    function proxyDownMsg() {
+      if (location.protocol === 'file:') {
+        return `当前页面是直接用 file:// 打开的，浏览器不允许这种页面访问本地服务，API 必然调不通。` +
+          `请改用 http://127.0.0.1:8791/ 打开（页面由 server.py 自己提供，不要再双击 index.html）。`;
+      }
+      return `当前页面地址是 ${location.origin}，但这个地址上没有本地服务应答 /api/*。` +
+        `确认 server.py 正在运行，并且页面是从 http://127.0.0.1:8791/ 打开的 —— ` +
+        `换成别的端口、别的域名（如 0.0.0.0、局域网 IP、Cursor 预览）都会失败。`;
+    }
+
+    function refreshNotConfiguredBanner(withLog) {
+      // 先看有没有更严重的「连不上服务」：它没解决的话，配 key 也是白配，
+      // 所以这时候不该显示「去填 key」那种会误导人的提示。
+      if (AI.proxyError) {
+        AI.errorTitle = '连不上本地服务';
+        AI.error = AI.proxyError;
+        renderAIError();
+        if (withLog) Log.line('err', logEsc(AI.error));
+        return true;
+      }
+      if (currentMode === 'manual' || AIConfig.ready(currentMode)) {
+        AI.error = null;
+        hideAIError();
+        return false;
+      }
+      AI.errorTitle = '引擎未配置';
+      AI.error = notConfiguredMsg(currentMode);
+      renderAIError();
+      if (withLog) Log.line('err', logEsc(AI.error));
+      return true;
+    }
+
+    function clearProbabilities() {
+      ['UP', 'DOWN', 'LEFT', 'RIGHT'].forEach(name => {
+        document.getElementById(`p-${name}`).innerText = '0%';
+        const bar = document.getElementById(`bar-${name}`);
+        bar.style.width = '0%';
+        bar.style.opacity = 0.45;
+      });
+      document.getElementById('confHeader').innerText = '模型返回的概率分布 (CONFIDENCE)';
+      document.getElementById('modelVal').innerText = '—';
+    }
+
+    function renderProbabilities(mode, chosen, probs) {
+      const color = mode === 'jev' ? '#00ffcc' : '#f43f5e';
+      ['UP', 'DOWN', 'LEFT', 'RIGHT'].forEach(name => {
+        const pct = (probs && probs[name] != null) ? Math.round(probs[name] * 100) : (name === chosen ? 100 : 0);
+        document.getElementById(`p-${name}`).innerText = `${pct}%`;
+        const bar = document.getElementById(`bar-${name}`);
+        bar.style.width = `${pct}%`;
+        bar.style.background = color;
+        bar.style.boxShadow = `0 0 8px ${color}`;
+        bar.style.opacity = probs ? 1 : 0.45;
+      });
+      document.getElementById('confHeader').innerText = probs
+        ? `模型返回的概率分布 (CONFIDENCE) · 选中 ${chosen}`
+        : `该模型只返回方向，没有概率分布 · 选中 ${chosen}`;
+    }
+
+    let promptViewerOpen = true;
+    function togglePromptViewer() {
+      promptViewerOpen = !promptViewerOpen;
+      document.getElementById('promptViewer').style.display = promptViewerOpen ? '' : 'none';
+      document.getElementById('promptToggle').innerText = promptViewerOpen ? '收起' : '展开';
+    }
+
+    function renderPromptViewer(mode, cfg, state, questions, messages) {
+      const el = document.getElementById('promptViewer');
+      if (mode === 'jev') {
+        el.innerText =
+          `POST ${cfg.baseUrl}/v1/systemone\n` +
+          `model: ${cfg.model}\n\n` +
+          `──── state（每次调用都完整重发，Jev 没有记忆）────\n` +
+          JSON.stringify(state, null, 1) + '\n\n' +
+          `──── questions.move.criteria（把动作后果直接写进选项描述）────\n` +
+          JSON.stringify(questions.move.criteria, null, 1);
+      } else {
+        el.innerText = `POST ${cfg.baseUrl}/chat/completions\nmodel: ${cfg.model}\n\n` +
+          messages.map(m => `──── ${m.role} ────\n${m.content}`).join('\n\n');
+      }
+    }
+
+    /* =========================================================================
+     *  10. 配置弹窗
+     * ========================================================================= */
+    function openConfig() {
+      const j = AIConfig.effective('jev');
+      const l = AIConfig.effective('llm');
+
+      document.getElementById('cfgJevBase').value = j.baseUrl;
+      document.getElementById('cfgJevModel').value = j.model;
+      document.getElementById('cfgLlmBase').value = l.baseUrl;
+      document.getElementById('cfgLlmModel').value = l.model;
+
+      document.getElementById('cfgJevKey').placeholder = j.serverHasKey
+        ? `留空则用服务端 .env 的 key (${j.serverKeyHint})` : 'apikey_...';
+      document.getElementById('cfgLlmKey').placeholder = l.serverHasKey
+        ? `留空则用服务端 .env 的 key (${l.serverKeyHint})` : 'sk-...';
+
+      document.getElementById('dotJevCfg').innerText = j.serverHasKey ? `服务端已有 key: ${j.serverKeyHint}` : '服务端未配置 key';
+      document.getElementById('dotLlmCfg').innerText = l.serverHasKey ? `服务端已有 key: ${l.serverKeyHint}` : '服务端未配置 key';
+
+      // Base URL 旁边标一下这个值是打哪来的，免得用户分不清「预填好的默认值」和「空着」
+      const markSrc = (id, mode) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const s = AIConfig.source(mode, 'baseUrl');
+        el.innerText = s === 'user' ? '已自定义' : (s === 'env' ? '来自 .env' : '默认值');
+        el.className = 'cfg-src ' + s;
+      };
+      markSrc('cfgJevBaseSrc', 'jev');
+      markSrc('cfgLlmBaseSrc', 'llm');
+
+      renderConfigDiag();
+
+      document.querySelectorAll('input[name="cfgPacing"]').forEach(el => {
+        el.checked = el.value === AIConfig.pacing;
+      });
+
+      const body = document.querySelector('.config-body');
+      if (body) body.scrollTop = 0;   // 每次打开都从顶部看起
+      document.getElementById('configMask').classList.remove('hidden');
+    }
+
+    function closeConfig() {
+      document.getElementById('configMask').classList.add('hidden');
+    }
+
+    // 配置弹窗顶部那行体检结果：页面地址 + 本地服务连通性 + key 来源
+    function renderConfigDiag() {
+      const el = document.getElementById('cfgDiag');
+      if (!el) return;
+      const fileProto = location.protocol === 'file:';
+      const originTxt = fileProto ? 'file://（本地文件，API 必失败）' : location.origin;
+      const linkOk = !fileProto && !AI.proxyError && !!AIConfig.serverDefaults;
+      const keyTxt = (AIConfig.serverDefaults && AIConfig.serverDefaults.jev.hasKey)
+        ? `服务端 .env 有 key (${AIConfig.serverDefaults.jev.keyHint})`
+        : '服务端 .env 没有 key，需要在下面手填';
+
+      el.innerHTML =
+        `<span>页面地址</span><b class="${fileProto ? 'bad' : ''}">${escapeHtml(originTxt)}</b>` +
+        `<span>·</span>` +
+        `<span>本地服务</span><b class="${linkOk ? 'ok' : 'bad'}">${linkOk ? '已连通' : '未连通'}</b>` +
+        `<span>·</span>` +
+        `<span>Jev key</span><b>${escapeHtml(keyTxt)}</b>`;
+
+      if (!linkOk) {
+        el.innerHTML += `<div style="flex-basis:100%;color:#f43f5e;">${escapeHtml(proxyDownMsg())}</div>`;
+      }
+    }
+
+    function saveConfig() {
+      // 用户没动过的 base url 就存空字符串，这样以后改 .env 还能继续生效；
+      // 只有真正改过的值才固化进 localStorage（否则一按保存就把默认值钉死成「已自定义」）。
+      function persistBaseUrl(inputId, mode) {
+        const v = document.getElementById(inputId).value.trim();
+        if (!v) return '';
+        const dft = (AIConfig.serverDefaults && AIConfig.serverDefaults[mode]) || {};
+        const fb = BUILTIN_DEFAULTS[mode] || {};
+        const effDefault = (dft.baseUrl || '').trim() || fb.baseUrl || '';
+        return v === effDefault ? '' : v;
+      }
+
+      AIConfig.jev = {
+        baseUrl: persistBaseUrl('cfgJevBase', 'jev'),
+        apiKey: document.getElementById('cfgJevKey').value.trim(),
+        model: document.getElementById('cfgJevModel').value.trim(),
+      };
+      AIConfig.llm = {
+        baseUrl: persistBaseUrl('cfgLlmBase', 'llm'),
+        apiKey: document.getElementById('cfgLlmKey').value.trim(),
+        model: document.getElementById('cfgLlmModel').value.trim(),
+      };
+      const picked = document.querySelector('input[name="cfgPacing"]:checked');
+      if (picked) AIConfig.pacing = picked.value;
+      AIConfig.save();
+      AI.error = null;
+      hideAIError();
+      refreshModeReadiness();
+      closeConfig();
+      Log.line('sys', `配置已保存 · JEV ${AIConfig.ready('jev') ? '✓' : '✗'} · LLM ${AIConfig.ready('llm') ? '✓' : '✗'} · 节奏 ${pacingSummary()}`);
+      // 之前可能因为没配置而停摆了，配好后要重新把请求链接上
+      aiKick();
+    }
+
+    async function testConnection(mode) {
+      const isJev = mode === 'jev';
+      const baseUrl = document.getElementById(isJev ? 'cfgJevBase' : 'cfgLlmBase').value.trim();
+      const apiKey = document.getElementById(isJev ? 'cfgJevKey' : 'cfgLlmKey').value.trim();
+      const status = document.getElementById(isJev ? 'cfgJevStatus' : 'cfgLlmStatus');
+
+      status.className = 'cfg-status';
+      status.innerText = '测试中…';
+
+      let resp;
+      try {
+        resp = await fetch('api/models', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: mode, baseUrl, apiKey }),
+        });
+      } catch (err) {
+        // 「Failed to fetch」是浏览器最没信息量的报错之一：它可能是页面地址不对、
+        // 服务没起来、被代理拦截…… 这里统一换成能直接照做的说明，并把地址摊开给用户看。
+        AI.proxyError = proxyDownMsg();
+        status.className = 'cfg-status err';
+        status.innerText = `✗ 连不上本地服务（${err.message}）\n${AI.proxyError}`;
+        refreshNotConfiguredBanner(false);
+        Log.line('err', logEsc(`测试连接失败：连不上本地服务 · 当前地址 ${currentOrigin()}`));
+        return;
+      }
+
+      // 能拿到 HTTP 响应就说明服务是通的，之前记的那条可以销掉
+      AI.proxyError = null;
+
+      try {
+        const result = await resp.json();
+        if (!result.ok) {
+          status.className = 'cfg-status err';
+          status.innerText = `✗ ${result.status || ''} ${formatAIError(result.error)}\n` +
+            `（页面 → 本地服务是通的，这条错误来自上游 API 本身）`;
+          return;
+        }
+        const list = isJev
+          ? (result.data.models || []).map(m => m.name)
+          : (result.data.data || []).map(m => m.id);
+        status.className = 'cfg-status ok';
+        status.innerText = `✓ 连接成功（${result.latencyMs} ms）· 可用模型 ${list.length} 个：` +
+          list.slice(0, 8).join(', ') + (list.length > 8 ? ' …' : '');
+      } catch (err) {
+        status.className = 'cfg-status err';
+        status.innerText = `✗ 本地服务返回的不是 JSON：${err.message}`;
+      }
+    }
+
+    function refreshModeReadiness() {
+      const jReady = AIConfig.ready('jev');
+      const lReady = AIConfig.ready('llm');
+      document.getElementById('subJev').innerText = jReady ? 'API 已配置' : '未配置 · 点 ⚙ 配置';
+      document.getElementById('subLlm').innerText = lReady ? 'API 已配置' : '未配置 · 点 ⚙ 配置';
+
+      // 「未配置」用灰色待机点，红色只留给真正的调用失败 —— 两件事别混成一个颜色
+      if (jReady) { if (currentMode === 'jev') setStatusDot('jev', null); }
+      else setStatusDot('jev', 'off');
+      if (lReady) { if (currentMode === 'llm') setStatusDot('llm', null); }
+      else setStatusDot('llm', 'off');
+
+      syncStartButtons();
+      updateModeBadge();   // 配好之后遮罩里的说明文案也要跟着变
+    }
+
+    /* =========================================================================
+     *  11. 移动与回合
+     *
+     *  游戏是回合制的一步一格：
+     *    - 手工模式：按键锁定方向，每 MANUAL_STEP_MS 走一格。走不通的方向不会
+     *      让吃豆人刹住，而是继续沿当前方向走（经典预输入手感，见 takeTurn）
+     *    - AI 模式：每走一格都重新问一次模型，答案到了才落这一步
+     *
+     *  幽灵的节奏由 pacing 决定：
+     *    - 回合制（默认）：幽灵每 2 个回合走一格。模型想多久都行 —— 延迟不影响
+     *      难度，只影响这一局打多久，比的是纯粹的决策质量。
+     *    - 实时：幽灵每 TICK*2 走一格。模型在思考的时候幽灵照走，慢就是直接死。
+     * ========================================================================= */
+    function canMoveDir(x, y, dir) {
+      if (!dir || (dir.dx === 0 && dir.dy === 0)) return false;
+      return !!grid[y + dir.dy] && grid[y + dir.dy][x + dir.dx] !== 1;
+    }
+
+    // 回合制 = 幽灵按回合数走 → 延迟不产生额外惩罚，纯粹比决策质量
+    // 实时   = 幽灵按真实时间走 → 每多思考一会儿就白送幽灵几步
+    function isAdaptivePacing() {
+      return currentMode === 'manual' || AIConfig.pacing === 'adaptive';
+    }
+
+    function pacingSummary() {
+      if (currentMode === 'manual') return `手工 · ${MANUAL_STEP_MS}ms/格`;
+      const avg = AI.stats.count ? Math.round(AI.stats.totalMs / AI.stats.count) : null;
+      const base = AIConfig.pacing === 'adaptive' ? '回合制 · 幽灵每 2 回合 1 格' : '实时 · 幽灵 290ms/格';
+      return avg ? `${base} · 思考 ${avg}ms/步` : base;
+    }
+
+    function movePacman(dir) {
+      if (!canMoveDir(pacman.x, pacman.y, dir)) return false;
+
+      pacman.dir = dir.name;
+      pacman.x += dir.dx;
+      pacman.y += dir.dy;
+      pacman.moving = true;
+      ghostsAwake = true;
+
+      recentCells.push(pacman.x + ',' + pacman.y);
+      if (recentCells.length > 8) recentCells.shift();
+
+      // 吃豆子
+      if (grid[pacman.y][pacman.x] === 0) {
+        grid[pacman.y][pacman.x] = 2;
+        score += 10;
+        totalScore += 10;
+        remainingPellets--;
+        rebuildPelletLayer();   // 只在真的吃掉一颗时才重画那一层
+        SoundFX.playWaka();
+        updateHUD();
+
+        if (remainingPellets <= 0) {
+          onLevelCleared();
+          return true;
+        }
+      }
+      return true;
+    }
+
+    function checkCollision() {
+      if (gameState !== 'playing') return;
+      for (const g of ghosts) {
+        if (g.x === pacman.x && g.y === pacman.y) {
+          onGameOver();
+          return;
+        }
+      }
+    }
+
+    // 落一个回合：走一步（走不动就罚站）→ 幽灵按规则行动 → 判生死。
+    // 手工和 AI 共用这一套判定，两种模式的规则才完全一致，对比才公平。
+    function takeTurn(dir) {
+      // ---- 手工模式的「预输入」手感（经典吃豆人就是这么做的）----
+      // 玩家按的方向如果暂时走不通（拐角还没到、或者压根是面墙），不要原地刹住，
+      // 而是继续沿当前方向往前走；那个方向一通立刻拐过去。
+      // 少了这一步，拐弯就要求玩家在唯一那一帧按下正确按键，手感会非常差。
+      let effective = dir;
+      if (currentMode === 'manual') {
+        const wantsToGo = dir && (dir.dx !== 0 || dir.dy !== 0);
+        if (!wantsToGo) {
+          effective = null;                                   // 没按键 → 彻底不动
+        } else if (!canMoveDir(pacman.x, pacman.y, dir)) {
+          // 已经走过一步才启用预输入。否则开局朝向（默认 DOWN）会让
+          // 「按了个走不通的方向」变成莫名其妙自己往下跑。
+          const cur = manualHasMoved ? MOVE_DIRS.find(d => d.name === pacman.dir) : null;
+          effective = (cur && canMoveDir(pacman.x, pacman.y, cur)) ? cur : null;
+        }
+      }
+
+      const legal = !!effective && canMoveDir(pacman.x, pacman.y, effective);
+      const fromX = pacman.x, fromY = pacman.y;
+
+      // 朝向只跟着「真正走出去的那一步」变，所以嘴巴永远朝着实际行进方向
+      if (legal) pacman.dir = effective.name;
+
+      if (currentMode !== 'manual') {
+        AI.stats.turns++;
+        // 模型选了个撞墙的方向 —— 这是它实打实的判断失误。如实记录，不给它兜底。
+        if (!legal) AI.stats.illegal++;
+      }
+
+      if (legal) {
+        const tx = fromX + effective.dx, ty = fromY + effective.dy;
+        const willEat = !!grid[ty] && grid[ty][tx] === 0;
+
+        // 这一步的日志必须在 movePacman 之前打。吃光最后一颗豆会在 movePacman
+        // 内部直接触发过关，那条 LVL 日志是从里面发出来的 —— 先打 MOV 顺序才对。
+        if (currentMode !== 'manual') {
+          Log.line('mov',
+            `T${String(AI.stats.turns).padStart(3, '0')} ` +
+            `落步 <span class="c-hi">"${effective.name}"</span> ${logPos(fromX, fromY)} → <span class="c-hi">${logPos(tx, ty)}</span>` +
+            (willEat ? ` · <span class="c-eat">吃到豆子 +10</span>` : '') +
+            ` · 剩 ${willEat ? remainingPellets - 1 : remainingPellets} 豆`);
+        } else {
+          manualHasMoved = true;
+        }
+
+        movePacman(effective);
+        const now = performance.now();
+        if (lastStepAt) emaStepMs = emaStepMs * 0.7 + Math.min(3000, now - lastStepAt) * 0.3;
+        lastStepAt = now;
+      } else {
+        pacman.moving = false;
+        // 日志：模型撞墙了。这是它自己的错，我们不给兜底，如实记下来
+        if (currentMode !== 'manual') {
+          Log.line('blk',
+            `T${String(AI.stats.turns).padStart(3, '0')} ` +
+            `模型选了 <b>"${dir ? dir.name : '—'}"</b> 但 ${dir
+              ? logPos(fromX + dir.dx, fromY + dir.dy) + ' 是墙'
+              : '没给方向'} · 原地罚站（累计撞墙 ${AI.stats.illegal}/${AI.stats.turns}）`);
+        }
+      }
+
+      stepCount++;
+      // 回合制：不管这一步走没走成，幽灵都按回合数行动 ——
+      // 撞墙 = 白送幽灵一个回合，这是很自然的惩罚
+      if (ghostsAwake && isAdaptivePacing() && stepCount % 2 === 0) updateGhosts();
+
+      checkCollision();
+      if (currentMode !== 'manual') updateAIStats();
+    }
+
+    // 答案到了就落地，落完立刻问下一步。异步链路的存活全靠这两个函数。
+    function maybeTakeTurn() {
+      if (currentMode === 'manual') return;
+      if (gameState !== 'playing' || isPaused) return;
+      if (!AI.decision) return;
+
+      const d = AI.take();
+      takeTurn(d);
+      aiKick();
+    }
+
+    // 保证「同一时刻最多一个请求在飞，且场上没有待落地的答案」
+    function aiKick() {
+      if (currentMode === 'manual') return;
+      if (gameState !== 'playing' || isPaused) return;
+      if (AI.pending || AI.decision) return;
+      // 没配置就直接不发起。否则主循环每帧都会撞进「未配置」分支，
+      // 疯狂重复报错（日志刷屏 + 每帧重绘错误横幅）
+      if (!AIConfig.ready(currentMode)) return;
+      AI.request();
+    }
+
+    function updateGhosts() {
+      const moves = [];
+      ghosts.forEach(g => {
+        const fromX = g.x, fromY = g.y;
+        const dirs = [
+          { dx: 0, dy: -1 }, { dx: 0, dy: 1 },
+          { dx: -1, dy: 0 }, { dx: 1, dy: 0 }
+        ].filter(d => grid[g.y + d.dy] && grid[g.y + d.dy][g.x + d.dx] !== 1);
+
+        dirs.sort((a, b) => {
+          const da = Math.hypot(g.x + a.dx - pacman.x, g.y + a.dy - pacman.y);
+          const db = Math.hypot(g.x + b.dx - pacman.x, g.y + b.dy - pacman.y);
+          return da - db;
+        });
+
+        if (dirs.length > 0) {
+          const move = (Math.random() > 0.25) ? dirs[0] : dirs[Math.floor(Math.random() * dirs.length)];
+          g.x += move.dx;
+          g.y += move.dy;
+          if (g.x !== fromX || g.y !== fromY) {
+            const dist = Math.abs(g.x - pacman.x) + Math.abs(g.y - pacman.y);
+            moves.push(`${g.name} ${logPos(fromX, fromY)}→${logPos(g.x, g.y)} <span class="c-dim">距Pac ${dist}</span>`);
+          }
+        }
+      });
+
+      if (moves.length) {
+        const threat = Math.min(...ghosts.map(g => Math.abs(g.x - pacman.x) + Math.abs(g.y - pacman.y)));
+        Log.line('gho',
+          `幽灵行动 · ${moves.join(' | ')}` +
+          (threat <= 2 ? ` · <b>危险！最近 ${threat} 格</b>` : ''));
+      }
+    }
+
+    /* =========================================================================
+     *  7. 结算
+     * ========================================================================= */
+    function onLevelCleared() {
+      SoundFX.stopMusic();
+      stepCount = 0;
+
+      if (level >= MAX_LEVEL) {
+        gameState = 'won';
+        SoundFX.playWin();
+        document.getElementById('winBadge').innerText = `最终结算 · 累计得分 ${totalScore}`;
+        document.getElementById('winSubText').innerText =
+          `全部 ${MAX_LEVEL} 关豆子已吃光！当前模式：${MODE_NAMES[currentMode]}`;
+        document.getElementById('winOverlay').classList.remove('hidden');
+        Log.line('lvl',
+          `<b>🏆 全部通关！</b> ${MAX_LEVEL} 关清空 · 累计得分 <span class="c-hi">${totalScore}</span>` +
+          ` · 总调 ${AI.stats.count} 次 · 平均 ${AI.stats.count ? Math.round(AI.stats.totalMs / AI.stats.count) : 0}ms`);
+      } else {
+        gameState = 'clear';
+        SoundFX.playLevelClear();
+        document.getElementById('levelBadge').innerText = `第 ${level} 关 通过 · 本关得分 ${score}`;
+        document.getElementById('levelSubText').innerHTML =
+          `🎉 过关！累计得分 <b style="color:#fbbf24">${totalScore}</b><br>下一关幽灵更快，数量也会增加`;
+        document.getElementById('levelOverlay').classList.remove('hidden');
+        Log.line('lvl',
+          `<b>★ 第 ${level} 关通过</b> · 本关 ${score} 分 · 累计 ${totalScore}` +
+          ` · ${AI.stats.turns} 回合 · 撞墙 ${AI.stats.illegal}` +
+          ` · 平均 ${AI.stats.count ? Math.round(AI.stats.totalMs / AI.stats.count) : 0}ms`);
+      }
+    }
+
+    function onGameOver() {
+      gameState = 'lost';
+      SoundFX.stopMusic();
+      SoundFX.playDeath();
+      document.getElementById('loseBadge').innerText = `模式：${MODE_NAMES[currentMode]}`;
+      document.getElementById('loseSubText').innerText = currentMode === 'llm'
+        ? `大模型生成 Token 延迟过长（>1秒），吃豆人无法及时躲避导致暴毙！止步第 ${level} 关，得分 ${totalScore}`
+        : `吃豆人被幽灵捕获！止步第 ${level} 关，累计得分 ${totalScore}`;
+      document.getElementById('loseOverlay').classList.remove('hidden');
+      Log.line('err',
+        `<b>GAME OVER</b> · 被幽灵捕获 @ ${logPos(pacman.x, pacman.y)}` +
+        ` · 第 ${level} 关 · 得分 ${totalScore} · ${AI.stats.turns} 回合吃 ${108 - remainingPellets} 豆` +
+        ` · 撞墙 ${AI.stats.illegal}`);
+    }
+
+    /* =========================================================================
+     *  8. 渲染
+     * ========================================================================= */
+    /* 霓虹灯管的色相表：青→品红→紫→金→薄荷→粉→天蓝→紫罗兰。
+     * 八个字刚好一个一个字，冷色打底、中间插一个金色当"坏掉的灯管"，
+     * 这是赛博朋克招牌最典型的配色套路。 */
+    const NEON_HUES = [190, 312, 268, 42, 168, 334, 205, 286];
+
+    // 廉价伪随机：同一个 step 永远给同一个值，闪起来才不会每帧乱跳
+    function neonHash(n) {
+      const s = Math.sin(n * 127.1) * 43758.5453;
+      return s - Math.floor(s);
+    }
+
+    /* 霓虹的闪烁强度（0~1）。
+     * 分两层叠：
+     *   高频层每 70ms 换一次随机数，模拟灯管接触不良的抖动；
+     *   低频层是整条招牌的"通电不稳"，慢慢呼吸。
+     * 单用高频会像频闪灯，单用低频又太平，两层叠加才像真霓虹。 */
+    function neonFlicker(seed, t) {
+      const r = neonHash(Math.floor(t / 70) * 13.37 + seed * 7.7);
+      let level = 1;
+      if (r < 0.08) level = 0.30;         // 偶尔骤暗一下
+      else if (r < 0.18) level = 0.70;    // 轻微一跳
+      return level * (0.84 + 0.16 * Math.sin(t * 0.006 + seed * 0.9));
+    }
+
+    /* 把 MAZE_TEXT 里的字做成霓虹灯管。
+     * 纯绘制，不动 grid —— 吃豆、碰撞、寻路完全不受影响。
+     * 每个字分四层画，这是做出"发光灯管"而不是"彩色字"的关键：
+     *   ① 色散重影  ② 外圈光晕  ③ 灯管本体  ④ 管壁高光
+     * g 是目标上下文（画到 neonLayer 上，不是主画布）。 */
+    function paintMazeText(g, t) {
+      g.save();
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.font = `700 ${Math.round(CELL_SIZE * 0.6)}px ` +
+        `"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif`;
+
+      let idx = 0;   // 全局序号：保证八个字颜色互不重复
+      for (const line of MAZE_TEXT) {
+        const chars = mazeText(line.text);   // 整行转一次，别在循环里逐字转
+        for (let i = 0; i < line.cols.length; i++) {
+          const ch = chars[i];
+          const col = line.cols[i];
+          // 不是墙就不画：宁可缺一个字，也不能让字压到豆子或通路上
+          if (!ch || !grid[line.row] || grid[line.row][col] !== 1) { idx++; continue; }
+
+          const cx = col * CELL_SIZE + CELL_SIZE / 2;
+          const cy = line.row * CELL_SIZE + CELL_SIZE / 2;
+          // 色相整体缓慢流动，招牌就会"呼吸"，不是死板的固定配色
+          const hue = (NEON_HUES[idx % NEON_HUES.length] + t * 0.03) % 360;
+          const f = neonFlicker(idx, t);
+
+          // ① 色散重影：红蓝往两边分开 1px，模仿镜头/玻璃的边缘色差
+          g.shadowBlur = 14;
+          g.globalAlpha = 0.16 * f;
+          g.fillStyle = `hsl(${(hue + 40) % 360}, 100%, 60%)`;
+          g.shadowColor = `hsl(${(hue + 40) % 360}, 100%, 60%)`;
+          g.fillText(ch, cx - 1.2, cy);
+          g.fillStyle = `hsl(${(hue + 320) % 360}, 100%, 60%)`;
+          g.shadowColor = `hsl(${(hue + 320) % 360}, 100%, 60%)`;
+          g.fillText(ch, cx + 1.2, cy);
+
+          // ② 外圈光晕：大模糊低透明，让字把周围的墙"照亮"
+          g.shadowBlur = 26;
+          g.globalAlpha = 0.32 * f;
+          g.shadowColor = `hsl(${hue}, 100%, 58%)`;
+          g.fillStyle = `hsl(${hue}, 100%, 58%)`;
+          g.fillText(ch, cx, cy);
+
+          // ③ 灯管本体：接近白，但染着本体的色，这是最亮的一层
+          g.shadowBlur = 7;
+          g.globalAlpha = 0.97 * f;
+          g.shadowColor = `hsl(${hue}, 100%, 70%)`;
+          g.fillStyle = `hsl(${hue}, 100%, 88%)`;
+          g.fillText(ch, cx, cy);
+
+          // ④ 管壁高光：一层极细的描边，勾出玻璃管的锐利边缘
+          g.shadowBlur = 0;
+          g.globalAlpha = 0.5 * f;
+          g.lineWidth = 1;
+          g.strokeStyle = `hsl(${hue}, 100%, 97%)`;
+          g.strokeText(ch, cx, cy);
+
+          idx++;
+        }
+      }
+      g.restore();
+    }
+
+    /* ---------------- 三个图层的绘制 / 重建 ---------------- */
+    // 墙 + 底色。整个图层一次画完，墙块之间的光晕才能在图层内部自然叠在一起
+    // （逐块单独缓存就做不到，缝上会露出接痕）。
+    function paintWalls(g) {
+      g.clearRect(0, 0, LOGICAL_SIZE, LOGICAL_SIZE);
+      g.fillStyle = '#05070d';
+      g.fillRect(0, 0, LOGICAL_SIZE, LOGICAL_SIZE);
+      g.shadowBlur = 10;
+      g.shadowColor = '#00d2ff';
+      for (let r = 0; r < GRID_SIZE; r++) {
+        for (let c = 0; c < GRID_SIZE; c++) {
+          if (grid[r][c] !== 1) continue;
+          const x = c * CELL_SIZE;
+          const y = r * CELL_SIZE;
+          g.fillStyle = 'rgba(0, 210, 255, 0.15)';
+          g.fillRect(x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+          g.strokeStyle = '#00f0ff';
+          g.lineWidth = 1.5;
+          g.strokeRect(x + 2, y + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+        }
+      }
+      g.shadowBlur = 0;
+    }
+
+    function paintPellets(g) {
+      g.clearRect(0, 0, LOGICAL_SIZE, LOGICAL_SIZE);
+      g.shadowBlur = 8;
+      g.shadowColor = '#fbbf24';
+      g.fillStyle = '#fbbf24';
+      for (let r = 0; r < GRID_SIZE; r++) {
+        for (let c = 0; c < GRID_SIZE; c++) {
+          if (grid[r][c] !== 0) continue;
+          g.beginPath();
+          g.arc(c * CELL_SIZE + CELL_SIZE / 2, r * CELL_SIZE + CELL_SIZE / 2, 3, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+      g.shadowBlur = 0;
+    }
+
+    function rebuildWallLayer() { paintWalls(wallLayer.ctx); }
+    function rebuildPelletLayer() { paintPellets(pelletLayer.ctx); }
+
+    function ensureNeonLayer(t) {
+      if (t - neonPaintedAt < NEON_REPAINT_MS) return;
+      neonPaintedAt = t;
+      neonLayer.ctx.clearRect(0, 0, LOGICAL_SIZE, LOGICAL_SIZE);
+      paintMazeText(neonLayer.ctx, t);
+    }
+
+    // 切字形时立刻作废霓虹图层。不补这一下的话招牌要等下一轮重建
+    // （最多 90ms）才变 —— 一屏别的字都换了、就中央那八个还没换，
+    // 快门眼可见。作废时间戳后下一次 draw 就会重画。
+    if (window.ZH) {
+      ZH.onChange(() => { neonPaintedAt = -1e9; });
+    }
+
+    function draw() {
+      const now = performance.now();
+      // 每帧重建变换：后面所有绘制都按 460 的逻辑尺度来，分辨率放大交给这里
+      ctx.setTransform(RENDER_SCALE, 0, 0, RENDER_SCALE, 0, 0);
+
+      // 静态内容三层直接贴上来。目标尺寸写 LOGICAL_SIZE，配合上面的 RENDER_SCALE
+      // 正好是 1:1 映射，不会有重采样带来的糊边。
+      // 顺序 = 原来的绘制顺序：墙打底 → 豆子 → 招牌压在墙上。
+      ensureNeonLayer(now);
+      ctx.drawImage(wallLayer.canvas, 0, 0, LOGICAL_SIZE, LOGICAL_SIZE);
+      ctx.drawImage(pelletLayer.canvas, 0, 0, LOGICAL_SIZE, LOGICAL_SIZE);
+      ctx.drawImage(neonLayer.canvas, 0, 0, LOGICAL_SIZE, LOGICAL_SIZE);
+
+      // 以下都是每帧真的会动的东西
+      const px = (pacman.rx != null ? pacman.rx : pacman.x) * CELL_SIZE + CELL_SIZE / 2;
+      const py = (pacman.ry != null ? pacman.ry : pacman.y) * CELL_SIZE + CELL_SIZE / 2;
+
+      ctx.save();
+      ctx.translate(px, py);
+      let angle = 0;
+      if (pacman.dir === 'UP') angle = -Math.PI / 2;
+      else if (pacman.dir === 'DOWN') angle = Math.PI / 2;
+      else if (pacman.dir === 'LEFT') angle = Math.PI;
+      else if (pacman.dir === 'RIGHT') angle = 0;
+      ctx.rotate(angle);
+
+      // 待机、被墙卡住、等模型回答的时候嘴巴也要一直张合 ——
+      // 只有暂停/结算才停下，否则静止的吃豆人看着像贴图。
+      // 到边界就夹住再反向，别让角度越界（负数会画出畸形扇形）
+      if (!isPaused && (gameState === 'playing' || gameState === 'ready')) {
+        pacman.mouthAngle += pacman.mouthSpeed;
+        if (pacman.mouthAngle >= 0.4) {
+          pacman.mouthAngle = 0.4;
+          pacman.mouthSpeed = -Math.abs(pacman.mouthSpeed);
+        } else if (pacman.mouthAngle <= 0.06) {
+          pacman.mouthAngle = 0.06;
+          pacman.mouthSpeed = Math.abs(pacman.mouthSpeed);
+        }
+      }
+
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = '#facc15';
+      ctx.fillStyle = '#facc15';
+      ctx.beginPath();
+      ctx.arc(0, 0, CELL_SIZE * 0.42, pacman.mouthAngle * Math.PI, (2 - pacman.mouthAngle) * Math.PI);
+      ctx.lineTo(0, 0);
+      ctx.fill();
+      ctx.restore();
+
+      ghosts.forEach(g => {
+        const gx = (g.rx != null ? g.rx : g.x) * CELL_SIZE + CELL_SIZE / 2;
+        const gy = (g.ry != null ? g.ry : g.y) * CELL_SIZE + CELL_SIZE / 2;
+
+        ctx.shadowBlur = 14;
+        ctx.shadowColor = g.color;
+        ctx.fillStyle = g.color;
+        ctx.beginPath();
+        ctx.arc(gx, gy - 2, CELL_SIZE * 0.38, Math.PI, 0, false);
+        ctx.lineTo(gx + CELL_SIZE * 0.38, gy + CELL_SIZE * 0.38);
+        ctx.lineTo(gx - CELL_SIZE * 0.38, gy + CELL_SIZE * 0.38);
+        ctx.fill();
+
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(gx - 4, gy - 4, 3, 0, Math.PI * 2);
+        ctx.arc(gx + 4, gy - 4, 3, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // 关卡角标
+      ctx.save();
+      ctx.globalAlpha = 0.75;
+      ctx.font = 'bold 11px ui-monospace, Menlo, monospace';
+      ctx.fillStyle = currentMode === 'manual' ? '#60a5fa' : (currentMode === 'jev' ? '#00ffcc' : '#f43f5e');
+      ctx.textAlign = 'right';
+      ctx.fillText(`LV ${level} · ${ZH.convert(MODE_NAMES[currentMode].slice(2))}`, LOGICAL_SIZE - 8, LOGICAL_SIZE - 8);
+      ctx.restore();
+
+      // 幽灵待机提示（吃豆人还没动之前，幽灵不会追人）
+      if (gameState === 'playing' && !isPaused && !ghostsAwake) {
+        const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 320);
+        ctx.save();
+        ctx.globalAlpha = 0.4 + 0.5 * pulse;
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 12px ui-monospace, Menlo, monospace';
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillText(ZH.convert('幽灵待机中 · 按方向键开跑'), LOGICAL_SIZE / 2, LOGICAL_SIZE - 10);
+        ctx.restore();
+      }
+    }
+
+    /* =========================================================================
+     *  9. 主循环
+     * ========================================================================= */
+    /* 渲染循环的开关（startLoop / stopLoop / rafId）定义在渲染图层那一节，
+       跟图层缓存放一起 —— 都是渲染生命周期的事。 */
+
+    function gameLoop(timestamp) {
+      const dt = lastFrameAt ? Math.min(100, timestamp - lastFrameAt) : 16;
+      lastFrameAt = timestamp;
+
+      if (gameState === 'playing' && !isPaused) {
+        if (currentMode === 'manual') {
+          // 手工模式：按固定节奏走，方向由按键锁定（走不通时会自动沿当前方向继续）
+          if (timestamp - lastDecisionTime >= MANUAL_STEP_MS) {
+            lastDecisionTime = timestamp;
+            takeTurn(manualDir);
+          }
+        } else {
+          // AI 模式：答案一到就落地（handleResult 里已经会触发），
+          // 这里只是兜底 + 保证请求链一直活着
+          maybeTakeTurn();
+          aiKick();
+
+          // 实时模式下幽灵按真实时间走；回合制模式由 takeTurn 按回合数驱动
+          if (!isAdaptivePacing() && ghostsAwake && gameState === 'playing') {
+            ghostClock += dt;
+            if (ghostClock >= TICK * 2) {
+              ghostClock = 0;
+              updateGhosts();
+              checkCollision();
+            }
+          }
+        }
+      } else {
+        pacman.moving = false;
+      }
+
+      updateRenderPositions(dt);
+      draw();
+      rafId = requestAnimationFrame(gameLoop);
+    }
+
+    // 渲染插值：把「一格一格跳」补成平滑滑行，否则画面看起来像幻灯片
+    function updateRenderPositions(dt) {
+      const ease = (obj) => {
+        if (obj.rx == null) { obj.rx = obj.x; obj.ry = obj.y; }
+        // 插值时间常数跟着实际步长走：一步 800ms 就滑 800ms，手感才对
+        const tau = Math.max(60, Math.min(320, emaStepMs * 0.35));
+        const k = 1 - Math.exp(-dt / tau);
+        obj.rx += (obj.x - obj.rx) * k;
+        obj.ry += (obj.y - obj.ry) * k;
+        if (Math.abs(obj.x - obj.rx) < 0.004) obj.rx = obj.x;
+        if (Math.abs(obj.y - obj.ry) < 0.004) obj.ry = obj.y;
+      };
+      ease(pacman);
+      ghosts.forEach(ease);
+    }
+
+    /* =========================================================================
+     *  12. 启动
+     * ========================================================================= */
+    async function bootstrap() {
+      Log.init();
+      AIConfig.load();
+
+      // 被 hub 用 iframe 嵌进来时带上 ?embed=1：藏掉自己的页头页脚，宽度填满 iframe。
+      // 不这么做的话页面上会出现两条一样的大标题（hub 一条、这里一条）。
+      // 类挂 <html> 而不是 <body>：--board / --panel-h 声明在 :root 上并引用了
+      // --stage-w / --chrome-h，自定义属性在声明它的元素上就解析完了，
+      // 挂到 body 上改不动上面那两个值（详见样式表里 html.embed 那段注释）。
+      if (new URLSearchParams(location.search).get('embed') === '1') {
+        document.documentElement.classList.add('embed');
+      }
+
+      let proxyError = null;
+      // 从本地服务拿 .env 里的默认值（key 只回显掩码，真实 key 留在服务端）
+      try {
+        const resp = await fetch('api/config');
+        const cfg = await resp.json();
+        if (cfg && cfg.ok) AIConfig.serverDefaults = cfg.data;
+      } catch (err) {
+        proxyError = proxyDownMsg();
+        AI.proxyError = proxyError;
+      }
+
+      switchMode('jev');
+      refreshModeReadiness();
+      resetGameToStart();
+
+      Log.line('sys',
+        `引擎就绪 · JEV <span class="c-hi">${AIConfig.ready('jev') ? '已配置' : '未配置'}</span>` +
+        ` · LLM <span class="c-hi">${AIConfig.ready('llm') ? '已配置' : '未配置'}</span>` +
+        ` · 节奏 ${pacingSummary()}`);
+
+      if (proxyError) {
+        // 这里不走 refreshNotConfiguredBanner 的覆盖逻辑，proxyError 优先级最高
+        AI.errorTitle = '连不上本地服务';
+        AI.error = proxyError;
+        renderAIError();
+        Log.line('err', logEsc(`连不上本地服务 · 当前地址 ${currentOrigin()}`));
+      } else if (!AIConfig.ready('jev') && !localStorage.getItem(CONFIG_KEY)) {
+        // 第一次来，直接弹配置
+        openConfig();
+      }
+
+      startLoop();
+    }
+
+    bootstrap();
+  </script>
+</body>
+</html>

@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="author" content="静电的AI研习社" />
+<meta name="description" content="TypeSafe Jev 演示合集：结构化判断工作台（内容审核 / 简历筛选）+ 吃豆人 AI 决策实测" />
+<title>Jev 演示合集 · 静电的AI研习社</title>
+<link rel="icon" href="favicon.svg" />
+<link rel="stylesheet" href="hub.css" />
+<!-- 简繁切换器（门户页 / 吃豆人页 / 调试台共用同一份，放在项目根的 zh/） -->
+<link rel="stylesheet" href="zh/zh.css" />
+</head>
+<body>
+
+<!-- 页头：结构与标题层级完全照搬吃豆人页（左：badge + h1｜右：频道署名 + 简繁切换） -->
+<header>
+  <div class="head-left">
+    <div class="badge">TYPESAFE JEV · SYSTEM ONE</div>
+    <h1>小白也能马上掌握！Jev模型游乐场</h1>
+  </div>
+  <div class="head-actions">
+    <a class="channel" href="https://www.youtube.com/@j-AI99" target="_blank" rel="noopener noreferrer">
+      <span class="channel-ico">▶</span>
+      <span class="channel-name">静电的AI研习社</span>
+      <span class="channel-handle">@j-AI99</span>
+    </a>
+    <!-- 按钮由 zh.js 填进来 -->
+    <span data-zh-slot></span>
+  </div>
+</header>
+
+<div class="container">
+  <!-- 左侧链接栏：点一下换右边的整块内容区 -->
+  <nav class="rail" id="rail">
+    <div class="rail-title">演示列表</div>
+    <!-- 链接由 hub.js 按 RAIL 表渲染 -->
+    <div class="rail-meta" id="railMeta"></div>
+  </nav>
+
+  <div class="content" id="content">
+
+    <!-- ==================== 1 总览 ==================== -->
+    <section class="panel" data-tab="home">
+      <div class="intro">
+        <h2>这是什么</h2>
+        <p>
+          Jev（TypeSafe System One）不生成文字。它只回答你在调用前定义好的
+          <b>带类型的判断</b> —— 所以它不会「说一段话让你去解析」，而是直接给出可编程的值：
+        </p>
+        <div class="primitives">
+          <div class="prim">
+            <div class="prim-tag choice">Choice</div>
+            <b>无序选项里选一个</b>
+            <span>选中的选项 + 全部选项的概率 + 置信度。最多 255 个选项。</span>
+          </div>
+          <div class="prim">
+            <div class="prim-tag score">Score</div>
+            <b>有序等级谱上打分</b>
+            <span>分数可以落在两档之间 + 每档概率 + 等级说明。2 ~ 10 级。</span>
+          </div>
+          <div class="prim">
+            <div class="prim-tag noul">Noul</div>
+            <b>是 / 否</b>
+            <span>「是」的概率（0~1）。没有单独的置信度字段，概率本身就是把握程度。</span>
+          </div>
+        </div>
+        <p class="intro-note">
+          置信度只由概率分布的集中程度决定 —— 它是模型对自己判断的把握，
+          <b>不是正确率保证</b>。所以它很适合放在「阈值 + 转人工」这类流程里：
+          判断交给模型，动作留在你的代码里。
+        </p>
+      </div>
+
+      <h2 class="sec-title">四个演示</h2>
+      <div class="home-grid">
+        <article class="demo-card" data-goto="pacman">
+          <div class="dc-top"><span class="dc-icon">👾</span><span class="dc-tag live">对局</span></div>
+          <h3>吃豆人 AI 决策实测</h3>
+          <p>同一条迷宫，三种驾驶方式：纯手工、Jev 逐步决策、传统 LLM。
+             每走一格都要重新判断方向，目标是吃完所有豆子且不碰幽灵。</p>
+          <div class="dc-foot">考验「连续判断」——单次答对不难，两百次都不出错才难</div>
+        </article>
+
+        <article class="demo-card" data-goto="moderation">
+          <div class="dc-top"><span class="dc-icon">🛡️</span><span class="dc-tag">中文</span></div>
+          <h3>内容审核</h3>
+          <p>一条典型的水军评论：负面评价、引流广告、顺带贬低同行的混合体。
+             一次调用拆成三个问题并行判断，看中文场景下的表现。</p>
+          <div class="dc-foot">Noul 判引流 · Choice 判分类 · Score 判违规程度</div>
+        </article>
+
+        <article class="demo-card" data-goto="resume">
+          <div class="dc-top"><span class="dc-icon">📄</span><span class="dc-tag">复合打分</span></div>
+          <h3>简历筛选</h3>
+          <p>把「这人行不行」这种模糊判断拆成互相独立的原子维度 ——
+             Python 深度、带队经验、架构能力各自打分，再单独问有没有规模化缺口。</p>
+          <div class="dc-foot">演示「把一个大判断拆成一组小判断」的做法</div>
+        </article>
+
+        <article class="demo-card" data-goto="blank">
+          <div class="dc-top"><span class="dc-icon">🧪</span><span class="dc-tag">自己填</span></div>
+          <h3>空白模板</h3>
+          <p>从零开始。左边填要被判断的内容、写问题、定义选项或等级，右边出结果。
+             想试什么就试什么。</p>
+          <div class="dc-foot">state + questions + 常驻规则，三样都能改</div>
+        </article>
+      </div>
+
+      <div class="intro-note-box">
+        <b>用法提示</b>
+        <p>
+          后三个演示共用同一个工作台，只是预填的内容不同。改坏了点「恢复示例」就能回到原样。
+          想一次到位做更自由的实验（自己加问题、跑带 / 不带常驻规则的对照），
+          也可以直接打开 <a href="/playground/" target="_blank" rel="noopener">完整调试台</a>。
+        </p>
+      </div>
+    </section>
+
+    <!-- ==================== 2 吃豆人 ==================== -->
+    <section class="panel iframe-panel" data-tab="pacman">
+      <div class="frame-wrap" data-frame="pacman"></div>
+    </section>
+
+    <!-- ==================== 3 内容审核 ==================== -->
+    <section class="panel" data-tab="moderation">
+      <div class="wb" data-preset="moderation"></div>
+    </section>
+
+    <!-- ==================== 4 简历筛选 ==================== -->
+    <section class="panel" data-tab="resume">
+      <div class="wb" data-preset="resume"></div>
+    </section>
+
+    <!-- ==================== 5 空白模板 ==================== -->
+    <section class="panel" data-tab="blank">
+      <div class="wb" data-preset="blank"></div>
+    </section>
+
+  </div>
+</div>
+
+<footer>
+  <span class="credit">© 2026 <b>静电的AI研习社</b> · 保留所有权利</span>
+</footer>
+
+<script src="zh/opencc-cn2t.js"></script>
+<script src="zh/zh.js"></script>
+<script src="hub.js"></script>
+</body>
+</html>
