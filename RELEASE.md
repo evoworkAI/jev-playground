@@ -50,7 +50,7 @@ Windows 版需在 Windows 机器上执行 `packaging/build.py` 后同样打 zip 
 
 ```
 🎮 Jev 模型游乐场 · 开源下载
-GitHub：https://github.com/你的用户名/jev-playground
+GitHub：https://github.com/evoworkAI/jev-playground
 
 Mac / Windows 解压双击即用，不用装 Python！
 吃豆人 AI 决策 + 内容审核 + 简历筛选 Demo
