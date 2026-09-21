@@ -1,18 +1,28 @@
 # Jev 模型游乐场
 
-> 小白也能马上掌握！吃豆人 AI 决策 + 内容审核 / 简历筛选工作台  
-> [静电的AI研习社 · @j-AI99](https://www.youtube.com/@j-AI99)
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.png">
+    <img src="assets/banner-light.png" alt="Jev 模型游乐场 —— 吃豆人 AI 决策 + 内容审核 / 简历筛选 Demo">
+  </picture>
+</p>
+
+[Release 下载](https://github.com/evoworkAI/jev-playground/releases) · [YouTube · @j-AI99](https://www.youtube.com/@j-AI99) · [怎么启动.txt](./怎么启动.txt)
+
+**小白也能马上掌握！吃豆人 AI 决策 + 内容审核 / 简历筛选工作台**
+
+解压双击即用，**不用装 Python**。没 API Key 也能先玩吃豆人手工模式。
 
 ---
 
 ## 最快启动（推荐 · 不用装 Python）
 
-去 GitHub **Releases** 下载对应系统的 zip（维护者需先打包上传，见 [`packaging/README.md`](./packaging/README.md)）：
+去 GitHub **Releases** 下载对应系统的 zip：
 
 | 你的电脑 | 解压后双击 |
 |---|---|
-| **Windows** | `Jev游乐场.exe` |
 | **Mac** | `Jev游乐场.app` |
+| **Windows** | `Jev游乐场.exe` |
 
 浏览器会自动打开 `http://127.0.0.1:8800/`。
 
@@ -25,8 +35,6 @@ Mac 首次若提示「无法打开」：**右键 → 打开 → 打开**（只�
 ---
 
 ## 备选：源码 zip（需要 Python）
-
-如果没有 Release 独立程序，可以下载源码 zip：
 
 1. GitHub **Code → Download ZIP**，解压  
 2. Mac 双击 `start-mac.command`，Windows 双击 `start-windows.bat`  
@@ -53,10 +61,16 @@ Mac 首次若提示「无法打开」：**右键 → 打开 → 打开**（只�
 ## 手动启动（开发者）
 
 ```bash
-cd jev
+cd jev-playground
 cp .env.example .env    # 可选
 python3 hub/server.py --port 8800
 # 浏览器打开 http://127.0.0.1:8800/
+```
+
+打包独立程序（维护者）：
+
+```bash
+python3 packaging/build.py
 ```
 
 ---
@@ -73,19 +87,18 @@ A：关掉之前没关干净的启动窗口，或重启电脑后再试。
 A：在 `.env` 里填 `TYPESAFE_API_KEY`，或在吃豆人「配置」弹窗里填 key。
 
 **Q：为什么必须本地跑，不能纯网页？**  
-A：Jev API 不允许浏览器直连（CORS 限制），需要本地一个小服务转发请求。启动脚本就是在帮你跑这个服务。
+A：Jev API 不允许浏览器直连（CORS 限制），需要本地一个小服务转发请求。
 
 ---
 
 ## 项目结构
 
 ```
-jev/
-├── dist/Jev游乐场.app|.exe  ← 打包产物（发给粉丝，不用 Python）
-├── packaging/build.py       ← 维护者打包命令
+jev-playground/
+├── assets/                  ← README banner / 微信二维码
 ├── start-mac.command        ← 源码版 Mac 启动（需 Python）
 ├── start-windows.bat        ← 源码版 Windows 启动（需 Python）
-├── 怎么启动.txt              ← 给完全小白的纯文本说明
+├── packaging/build.py       ← 独立程序打包
 ├── hub/                     ← 门户页 + 后端（主入口）
 ├── pacman_demo/             ← 吃豆人
 ├── playground/              ← 完整调试台（/playground/）
@@ -94,8 +107,18 @@ jev/
 
 ---
 
-## License
+## 加个微信
 
-MIT（见 [LICENSE](./LICENSE)）
+新 demo、Jev 玩法、改稿和规则迭代，我会发在「静电的 AI 研习社」。想聊这个游乐场，或者提功能建议，扫码加我。
 
-简繁转换使用 [OpenCC](https://github.com/BYVoid/OpenCC)（`zh/opencc-cn2t.js`）。
+<p align="center">
+  <img src="assets/wechat-qr.png" alt="微信二维码" width="280">
+</p>
+
+不收费，也不用转发集赞。扫码加不上（微信偶尔会拦）就到 [Issues](https://github.com/evoworkAI/jev-playground/issues) 说一声。
+
+---
+
+**Release** [v1.0.0](https://github.com/evoworkAI/jev-playground/releases) · **YouTube** [@j-AI99](https://www.youtube.com/@j-AI99) · **打包说明** [packaging/README.md](./packaging/README.md)
+
+**许可** MIT · 简繁转换使用 [OpenCC](https://github.com/BYVoid/OpenCC)（`zh/opencc-cn2t.js`）
