@@ -13,6 +13,12 @@
 
 解压双击即用，**不用装 Python**。没 API Key 也能先玩吃豆人手工模式。
 
+<p align="center">
+  <img src="assets/demo-screenshot.jpg" alt="Jev 模型游乐场界面：吃豆人 AI 决策、置信度分布与实时日志" width="920">
+</p>
+
+<p align="center"><sub>吃豆人 Jev 决策模式 · 每步返回方向 + 概率分布 · 右侧 STREAM 实时日志</sub></p>
+
 ---
 
 ## 最快启动（推荐 · 不用装 Python）
@@ -95,7 +101,7 @@ A：Jev API 不允许浏览器直连（CORS 限制），需要本地一个小服
 
 ```
 jev-playground/
-├── assets/                  ← README banner / 微信二维码
+├── assets/                  ← README banner / 界面截图 / 微信二维码
 ├── start-mac.command        ← 源码版 Mac 启动（需 Python）
 ├── start-windows.bat        ← 源码版 Windows 启动（需 Python）
 ├── packaging/build.py       ← 独立程序打包
