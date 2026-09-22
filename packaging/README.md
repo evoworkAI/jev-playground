@@ -17,19 +17,29 @@ python3 packaging/build.py
 
 ## 发给粉丝
 
-把下面文件打成一个 zip，上传到 **GitHub Releases**：
+打包完成后执行：
+
+```bash
+python3 packaging/zip_release.py
+```
+
+上传到 GitHub Releases 的文件名用英文，链接才不会被吃掉中文：
 
 ```
-Jev游乐场-Mac.zip
+Jev-Playground-Mac.zip
   ├── Jev游乐场.app
-  └── 怎么启动.txt
+  ├── 怎么启动.txt
+  └── .env.example
 
-Jev游乐场-Windows.zip
+Jev-Playground-Windows.zip
   ├── Jev游乐场.exe
-  └── 怎么启动.txt
+  ├── 怎么启动.txt
+  └── .env.example
 ```
 
 `.env` 不用打包——程序首次运行会在旁边自动生成。
+
+Mac 和 Windows 也可以由 GitHub Actions 构建：Actions → **Build release binaries** → Run workflow。
 
 ## 体积参考
 

@@ -7,7 +7,7 @@
   </picture>
 </p>
 
-[Release 下载](https://github.com/evoworkAI/jev-playground/releases) · [YouTube · @j-AI99](https://www.youtube.com/@j-AI99) · [怎么启动.txt](./怎么启动.txt)
+[下载 Mac 版](https://github.com/evoworkAI/jev-playground/releases/latest/download/Jev-Playground-Mac.zip) · [下载 Windows 版](https://github.com/evoworkAI/jev-playground/releases/latest/download/Jev-Playground-Windows.zip) · [YouTube · @j-AI99](https://www.youtube.com/@j-AI99) · [怎么启动.txt](./怎么启动.txt)
 
 **小白也能马上掌握！吃豆人 AI 决策 + 内容审核 / 简历筛选工作台**
 
@@ -23,12 +23,12 @@
 
 ## 最快启动（推荐 · 不用装 Python）
 
-去 GitHub **Releases** 下载对应系统的 zip：
+按你的电脑点下面的链接，下载后解压，双击里面的程序：
 
-| 你的电脑 | 解压后双击 |
-|---|---|
-| **Mac** | `Jev游乐场.app` |
-| **Windows** | `Jev游乐场.exe` |
+| 你的电脑 | 直接下载 | 解压后双击 |
+|---|---|---|
+| **Mac** | [Jev-Playground-Mac.zip](https://github.com/evoworkAI/jev-playground/releases/latest/download/Jev-Playground-Mac.zip) | `Jev游乐场.app` |
+| **Windows** | [Jev-Playground-Windows.zip](https://github.com/evoworkAI/jev-playground/releases/latest/download/Jev-Playground-Windows.zip) | `Jev游乐场.exe` |
 
 浏览器会自动打开 `http://127.0.0.1:8800/`。
 
@@ -125,6 +125,6 @@ jev-playground/
 
 ---
 
-**Release** [v1.0.0](https://github.com/evoworkAI/jev-playground/releases) · **YouTube** [@j-AI99](https://www.youtube.com/@j-AI99) · **打包说明** [packaging/README.md](./packaging/README.md)
+**Mac** [Jev-Playground-Mac.zip](https://github.com/evoworkAI/jev-playground/releases/latest/download/Jev-Playground-Mac.zip) · **Windows** [Jev-Playground-Windows.zip](https://github.com/evoworkAI/jev-playground/releases/latest/download/Jev-Playground-Windows.zip) · **YouTube** [@j-AI99](https://www.youtube.com/@j-AI99) · **打包说明** [packaging/README.md](./packaging/README.md)
 
 **许可** MIT · 简繁转换使用 [OpenCC](https://github.com/BYVoid/OpenCC)（`zh/opencc-cn2t.js`）

@@ -5,10 +5,15 @@
 【推荐】不用装 Python —— 下载独立程序版
 ───────────────────────────────────────────────
 
-  在 GitHub 的 Releases 页面下载对应系统的 zip：
+  按系统打开对应链接，下载后解压再双击：
 
-    Windows  → 解压后双击  Jev游乐场.exe
-    Mac      → 解压后双击  Jev游乐场.app
+    Mac
+      https://github.com/evoworkAI/jev-playground/releases/latest/download/Jev-Playground-Mac.zip
+      解压后双击  Jev游乐场.app
+
+    Windows
+      https://github.com/evoworkAI/jev-playground/releases/latest/download/Jev-Playground-Windows.zip
+      解压后双击  Jev游乐场.exe
 
   浏览器会自动打开 http://127.0.0.1:8800/
 

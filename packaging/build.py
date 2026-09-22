@@ -57,13 +57,15 @@ def main() -> None:
         app = DIST / "Jev游乐场.app"
         print(f"  产出     : {app}")
         print()
-        print("  发给粉丝：把 Jev游乐场.app 和 .env.example 一起打 zip")
+        print("  发给粉丝：python3 packaging/zip_release.py")
+        print("  得到     : Jev-Playground-Mac.zip")
         print("  用法     : 解压后双击 Jev游乐场.app")
     else:
         exe = DIST / "Jev游乐场.exe"
         print(f"  产出     : {exe}")
         print()
-        print("  发给粉丝：把 Jev游乐场.exe 和 .env.example 一起打 zip")
+        print("  发给粉丝：python3 packaging/zip_release.py")
+        print("  得到     : Jev-Playground-Windows.zip")
         print("  用法     : 解压后双击 Jev游乐场.exe")
     print("=" * 60)
 
